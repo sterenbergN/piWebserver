@@ -1,5 +1,5 @@
 import { partyEmitter } from './emitter';
-import { BOT_LEVELS, KART_STYLES, KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle } from './kart-shared';
+import { BOT_LEVELS, KART_STYLES, KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle, MAX_COINS } from './kart-shared';
 import { KART_TRACKS, KartTrack, TrackId, projectOntoTrack, sampleTrackAtProgress } from './kart-tracks';
 
 export type { KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle } from './kart-shared';
@@ -73,9 +73,14 @@ export interface KartState {
   driftDir: number; // -1 or +1
   driftTime: number;
   driftLevel: 0 | 1 | 2 | 3; // 0=none, 1=blue, 2=orange, 3=ultra purple
+  hopTimer: number;
   boostTimer: number;
   slipstreamTimer: number;
+  slipstreamActive: boolean;
   goldenShroomTimer: number;
+  coins: number;
+  rankDelta: number;
+  rankDeltaUntil: number;
   // Jumps
   airTimer: number; // seconds left in the air
   airDuration: number;
@@ -133,17 +138,26 @@ export interface ActiveItemBox {
   isBonus?: boolean;
 }
 
+export interface ActiveCoin {
+  id: string;
+  x: number;
+  z: number;
+  respawnTimer: number;
+}
+
 export interface KartRaceStats {
   drifts: Record<string, number>;
   hits: Record<string, number>;
   spunOut: Record<string, number>;
+  coinsCollected: Record<string, number>;
+  tricks: Record<string, number>;
   fastestLap?: { racerId: string; racerName: string; timeMs: number } | null;
 }
 
 export type KartEventType =
   | 'box' | 'boost' | 'pad' | 'miniturbo' | 'rocket' | 'stall' | 'shell' | 'drop' | 'hit' | 'explosion'
   | 'lightning' | 'horn' | 'wall' | 'bump' | 'jump' | 'land' | 'trick' | 'lap' | 'final_lap' | 'finish'
-  | 'star' | 'lead' | 'clash' | 'go';
+  | 'star' | 'lead' | 'clash' | 'go' | 'hop' | 'drift_tier' | 'coin' | 'slipstream';
 
 export interface KartEvent {
   id: number;
@@ -177,6 +191,7 @@ export interface KartRaceSim {
   kartOrder: string[];
   inputs: Record<string, KartInputState>;
   itemBoxes: ActiveItemBox[];
+  coins: ActiveCoin[];
   hazards: KartHazard[];
   nextHazardId: number;
   nextFinishRank: number;
@@ -249,8 +264,11 @@ export interface KartTelemetrySnapshot {
     driftDir: number;
     driftLevel: 0 | 1 | 2 | 3;
     driftCharge: number; // 0..100% progress towards the next tier
+    hopT: number;
+    launchRev: number;
     boostTimer: number;
     slipstreamTimer: number;
+    slipstreaming: boolean;
     goldenShroomTimer: number;
     spinOutTimer: number;
     shrinkTimer: number;
@@ -258,14 +276,18 @@ export interface KartTelemetrySnapshot {
     airT: number; // 0 on the ground, otherwise 0..1 through the jump arc
     trick: boolean;
     offRoad: boolean;
+    braking: boolean;
     autopilot: boolean;
     horn: boolean;
     hasIncomingShell: boolean;
     heldItem: KartItemType | null;
     itemRoulette: boolean;
+    coins: number;
+    rankDelta: number;
     statusText: string | null;
   }[];
   itemBoxes: { id: string; x: number; z: number; active: boolean; bonus?: boolean }[];
+  coins: { id: string; x: number; z: number; active: boolean }[];
   hazards: { id: string; kind: KartHazard['kind']; x: number; z: number; angle: number; age: number; ttl: number }[];
   events: KartEvent[];
   timestamp: number;
@@ -527,9 +549,14 @@ export function createKartSimulation(opts: {
       driftDir: 0,
       driftTime: 0,
       driftLevel: 0,
+      hopTimer: 0,
       boostTimer: 0,
       slipstreamTimer: 0,
+      slipstreamActive: false,
       goldenShroomTimer: 0,
+      coins: 0,
+      rankDelta: 0,
+      rankDeltaUntil: 0,
       airTimer: 0,
       airDuration: 0,
       trickDone: false,
@@ -564,6 +591,13 @@ export function createKartSimulation(opts: {
     respawnTimer: 0,
   }));
 
+  const coins: ActiveCoin[] = track.coins.map((c) => ({
+    id: c.id,
+    x: c.x,
+    z: c.z,
+    respawnTimer: 0,
+  }));
+
   const waitingForOrientation = Boolean(opts.requireOrientation);
   const sim: KartRaceSim = {
     roomCode: opts.roomCode,
@@ -587,6 +621,7 @@ export function createKartSimulation(opts: {
     kartOrder,
     inputs,
     itemBoxes,
+    coins,
     hazards: [],
     nextHazardId: 1,
     nextFinishRank: 1,
@@ -600,7 +635,7 @@ export function createKartSimulation(opts: {
     nextEventId: 1,
     announcement: null,
     announcementUntil: 0,
-    stats: { drifts: {}, hits: {}, spunOut: {}, fastestLap: null },
+    stats: { drifts: {}, hits: {}, spunOut: {}, coinsCollected: {}, tricks: {}, fastestLap: null },
     onFinish: opts.onFinish,
   };
 
@@ -791,6 +826,7 @@ function spinKart(
   k.spinOutTimer = Math.max(k.spinOutTimer, opts.duration);
   k.hitImmuneTimer = opts.duration + HIT_IMMUNITY_S;
   k.speed *= opts.speedMul;
+  k.coins = Math.max(0, k.coins - 3);
   k.drifting = false;
   k.driftDir = 0;
   k.driftTime = 0;
@@ -846,6 +882,7 @@ export function fireKartItem(sim: KartRaceSim, target: string | KartState) {
         if (other.id === k.id || other.finished || other.starTimer > 0) continue;
         other.shrinkTimer = 5.0;
         other.speed *= 0.5;
+        other.coins = Math.max(0, other.coins - 3);
         other.spinOutTimer = Math.max(other.spinOutTimer, 0.7);
         other.drifting = false;
         other.driftDir = 0;
@@ -1206,6 +1243,7 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
   if (k.heldItem) k.itemHeldFor += dt;
 
   // Decrement active timers
+  if (k.hopTimer > 0) k.hopTimer = Math.max(0, k.hopTimer - dt);
   if (k.boostTimer > 0) k.boostTimer = Math.max(0, k.boostTimer - dt);
   if (k.goldenShroomTimer > 0) {
     k.goldenShroomTimer = Math.max(0, k.goldenShroomTimer - dt);
@@ -1254,8 +1292,12 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
   // ── Jump: in the air the kart flies straight; a drift press pulls a trick for a landing boost
   if (k.airTimer > 0) {
     k.airTimer = Math.max(0, k.airTimer - dt);
+    if (k.boostTimer > 0 || k.starTimer > 0) {
+      k.speed = Math.max(k.speed, cls.maxSpeed * style.topSpeed * 1.15);
+    }
     if (!k.trickDone && inp.drift && !k.isBot) {
       k.trickDone = true;
+      sim.stats.tricks[k.id] = (sim.stats.tricks[k.id] || 0) + 1;
       setKartStatus(k, '🤸 TRICK!', sim.elapsedMs, 900);
       pushEvent(sim, 'trick', k);
     } else if (!k.trickDone && k.isBot && k.airTimer < k.airDuration * 0.7 && k.aiPhase < 4) {
@@ -1277,6 +1319,8 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
     const wantsDrift = inp.drift && !inp.brake && k.speed > 18;
     if (wantsDrift && !k.drifting) {
       k.drifting = true;
+      k.hopTimer = 0.15;
+      pushEvent(sim, 'hop', k);
       if (Math.abs(inp.steer) > 0.08) {
         k.driftDir = Math.sign(inp.steer);
       } else if (Math.abs(sample.curvature) > 0.002) {
@@ -1298,8 +1342,11 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
       if (k.driftTime >= DRIFT_TIERS[2]) k.driftLevel = 3;
       else if (k.driftTime >= DRIFT_TIERS[1]) k.driftLevel = 2;
       else if (k.driftTime >= DRIFT_TIERS[0]) k.driftLevel = 1;
-      if (!k.isBot && k.driftLevel > prevLevel) {
-        setKartStatus(k, k.driftLevel === 3 ? '💜 ULTRA CHARGED!' : k.driftLevel === 2 ? '🔥 SUPER READY!' : '💨 MINI READY!', sim.elapsedMs, 700);
+      if (k.driftLevel > prevLevel) {
+        pushEvent(sim, 'drift_tier', k, { value: k.driftLevel });
+        if (!k.isBot) {
+          setKartStatus(k, k.driftLevel === 3 ? '💜 ULTRA CHARGED!' : k.driftLevel === 2 ? '🔥 SUPER READY!' : '💨 MINI READY!', sim.elapsedMs, 700);
+        }
       }
     }
     if (k.drifting && !wantsDrift) {
@@ -1351,6 +1398,8 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
       top *= 1 + rankRatio * 0.05;
     }
     if (k.finished) top = cls.maxSpeed * 0.7;
+    else top *= 1 + (k.coins / MAX_COINS) * 0.08;
+    if (k.slipstreamActive) top *= 1.05;
     if (k.drifting) top *= 0.985;
     if (k.shrinkTimer > 0) top *= 0.78;
     if (k.starTimer > 0) top *= STAR_SPEED_MUL;
@@ -1389,17 +1438,21 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
     }
     if (inSlipstream) {
       k.slipstreamTimer += dt;
-      if (k.slipstreamTimer >= 1.8) {
-        k.boostTimer = Math.max(k.boostTimer, 0.9);
+      k.slipstreamActive = k.slipstreamTimer > 0.35;
+      if (k.slipstreamTimer >= 1.6) {
+        k.boostTimer = Math.max(k.boostTimer, 1.0);
         k.slipstreamTimer = 0;
-        setKartStatus(k, '💨 SLIPSTREAM!', sim.elapsedMs, 1000);
-        pushEvent(sim, 'boost', k);
+        k.slipstreamActive = false;
+        setKartStatus(k, '💨 SLIPSTREAM!', sim.elapsedMs, 1100);
+        pushEvent(sim, 'slipstream', k);
       }
     } else {
       k.slipstreamTimer = Math.max(0, k.slipstreamTimer - dt * 1.5);
+      k.slipstreamActive = false;
     }
   } else {
     k.slipstreamTimer = 0;
+    k.slipstreamActive = false;
   }
 
   // ── Travel direction: lags the heading by how much grip this surface and state allow
@@ -1525,6 +1578,17 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
           clearDrift(k);
         }
         pushEvent(sim, 'jump', k);
+      }
+    }
+
+    // Coins
+    for (const coin of sim.coins) {
+      if (coin.respawnTimer > 0) continue;
+      if (Math.hypot(k.x - coin.x, k.z - coin.z) < 3.4) {
+        coin.respawnTimer = 12;
+        k.coins = Math.min(MAX_COINS, k.coins + 1);
+        sim.stats.coinsCollected[k.id] = (sim.stats.coinsCollected[k.id] || 0) + 1;
+        pushEvent(sim, 'coin', k, { x: coin.x, z: coin.z, value: k.coins });
       }
     }
   }
@@ -1790,10 +1854,15 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     triggerChaosDrop(sim.roomCode, sim.queuedChaos);
   }
 
-  // Update item box respawn timers
+  // Update item box and coin respawn timers
   for (const box of sim.itemBoxes) {
     if (box.respawnTimer > 0) {
       box.respawnTimer = Math.max(0, box.respawnTimer - dt);
+    }
+  }
+  for (const coin of sim.coins) {
+    if (coin.respawnTimer > 0) {
+      coin.respawnTimer = Math.max(0, coin.respawnTimer - dt);
     }
   }
 
@@ -1814,7 +1883,12 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     return b.totalProgress - a.totalProgress;
   });
   sorted.forEach((k, idx) => {
-    k.rank = idx + 1;
+    const nextRank = idx + 1;
+    if (sim.raceTimeMs > 3000 && k.rank !== nextRank) {
+      k.rankDelta = k.rank > nextRank ? 1 : -1;
+      k.rankDeltaUntil = sim.elapsedMs + 2200;
+    }
+    k.rank = nextRank;
   });
 
   // Commentary when a new racer takes the lead
@@ -1929,8 +2003,11 @@ export function getKartSnapshot(sim: KartRaceSim): KartTelemetrySnapshot {
         driftDir: k.driftDir,
         driftLevel: k.driftLevel,
         driftCharge: driftChargePct,
+        hopT: k.hopTimer > 0 ? Math.round((1 - k.hopTimer / 0.15) * 100) / 100 : 0,
+        launchRev: sim.countdownMs > 0 && !sim.waitingForOrientation ? Math.round(k.launchHoldTimer * 100) / 100 : 0,
         boostTimer: Math.round(k.boostTimer * 100) / 100,
         slipstreamTimer: Math.round(k.slipstreamTimer * 10) / 10,
+        slipstreaming: k.slipstreamActive,
         goldenShroomTimer: Math.round(k.goldenShroomTimer * 10) / 10,
         spinOutTimer: Math.round(k.spinOutTimer * 100) / 100,
         shrinkTimer: Math.round(k.shrinkTimer * 10) / 10,
@@ -1938,11 +2015,14 @@ export function getKartSnapshot(sim: KartRaceSim): KartTelemetrySnapshot {
         airT: k.airTimer > 0 && k.airDuration > 0 ? Math.round((1 - k.airTimer / k.airDuration) * 100) / 100 : 0,
         trick: k.airTimer > 0 && k.trickDone,
         offRoad: k.offRoad,
+        braking: Boolean(!k.finished && sim.inputs[k.id]?.brake),
         autopilot: k.autopilot,
         horn: sim.elapsedMs < k.hornUntil,
         hasIncomingShell: incoming.has(k.id),
         heldItem: k.heldItem,
         itemRoulette: k.itemRouletteTimer > 0,
+        coins: k.coins,
+        rankDelta: sim.elapsedMs < k.rankDeltaUntil ? k.rankDelta : 0,
         statusText: k.statusText,
       };
     }),
@@ -1955,6 +2035,12 @@ export function getKartSnapshot(sim: KartRaceSim): KartTelemetrySnapshot {
         active: b.respawnTimer <= 0,
         bonus: b.isBonus,
       })),
+    coins: sim.coins.map((c) => ({
+      id: c.id,
+      x: Math.round(c.x * 10) / 10,
+      z: Math.round(c.z * 10) / 10,
+      active: c.respawnTimer <= 0,
+    })),
     hazards: sim.hazards.map((h) => ({
       id: h.id,
       kind: h.kind,

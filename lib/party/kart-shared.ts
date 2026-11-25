@@ -65,6 +65,14 @@ export const BOT_LEVELS: Record<KartBotLevel, { label: string; skill: number; ea
 };
 
 export const DRIFT_TIER_COLORS = ['#94a3b8', '#38bdf8', '#f97316', '#d946ef'] as const;
+export const DRIFT_TIER_LABELS = ['', 'MINI-TURBO', 'SUPER TURBO', 'ULTRA TURBO'] as const;
+export const MAX_COINS = 10;
+export const KART_STAT_BARS: Record<KartStyle, { speed: number; accel: number; turn: number; drift: number; weight: number }> = {
+  classic: { speed: 3, accel: 3, turn: 3, drift: 3, weight: 3 },
+  rocket: { speed: 5, accel: 2, turn: 3, drift: 3, weight: 2 },
+  cyber: { speed: 3, accel: 4, turn: 5, drift: 5, weight: 2 },
+  bruiser: { speed: 4, accel: 3, turn: 2, drift: 2, weight: 5 },
+};
 export const RANK_COLORS = ['#facc15', '#e2e8f0', '#fb923c', '#38bdf8', '#a855f7', '#94a3b8', '#94a3b8', '#94a3b8'] as const;
 
 export function ordinal(n: number): string {

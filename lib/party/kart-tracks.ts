@@ -40,6 +40,15 @@ export interface ItemBoxSpawnDef {
   z: number;
 }
 
+export interface CoinSpawnDef {
+  id: string;
+  progress: number;
+  lateral: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
 /** A jump across the full road width. Crossing it launches the kart. */
 export interface RampDef {
   id: string;
@@ -92,6 +101,7 @@ export interface KartTrack {
   boostPads: BoostPadDef[];
   itemBoxes: ItemBoxSpawnDef[];
   ramps: RampDef[];
+  coins: CoinSpawnDef[];
 }
 
 export const SAMPLE_COUNT = 440;
@@ -384,6 +394,63 @@ function createTrack(config: {
     return { id: `ramp_${i}`, progress, x: s.x, y: s.y, z: s.z, angle: s.angle };
   });
 
+  const wrapProgressDist = (a: number, b: number) => {
+    const d = Math.abs(a - b);
+    return Math.min(d, 1 - d);
+  };
+  const isCoinSpotClear = (p: number) =>
+    p >= 0.04 &&
+    p <= 0.93 &&
+    config.itemRows.every((r) => wrapProgressDist(p, r) >= 0.02) &&
+    config.ramps.every((r) => wrapProgressDist(p, r) >= 0.025);
+
+  const validStarts: number[] = [];
+  for (let p = 0.04; p <= 0.908 + 1e-9; p += 0.002) {
+    const pRound = Math.round(p * 1000) / 1000;
+    if (isCoinSpotClear(pRound) && isCoinSpotClear(pRound + 0.011) && isCoinSpotClear(pRound + 0.022)) {
+      validStarts.push(pRound);
+    }
+  }
+
+  const pickStarts = (minSpacing: number): number[] => {
+    const chosen: number[] = [];
+    for (const p of validStarts) {
+      if (chosen.length === 0 || p - chosen[chosen.length - 1] >= minSpacing) {
+        chosen.push(p);
+      }
+    }
+    return chosen;
+  };
+
+  let groupStarts = pickStarts(0.075);
+  if (groupStarts.length < 8) groupStarts = pickStarts(0.045);
+  if (groupStarts.length > 10) {
+    const targetGroups = 9;
+    groupStarts = Array.from({ length: targetGroups }, (_, i) =>
+      groupStarts[Math.floor((i * groupStarts.length) / targetGroups)],
+    );
+  }
+
+  const straightOffsets = [0, 0.3, -0.3];
+  const coins: CoinSpawnDef[] = [];
+  groupStarts.forEach((baseP, gIdx) => {
+    const straightLat = straightOffsets[gIdx % straightOffsets.length];
+    for (let c = 0; c < 3; c++) {
+      const progress = Math.round((baseP + c * 0.011) * 10000) / 10000;
+      const s = at(progress);
+      const lat = Math.abs(s.curvature) > 0.004 ? -Math.sign(s.curvature) * 0.45 : straightLat;
+      const offset = lat * halfRoad;
+      coins.push({
+        id: `coin_${coins.length}`,
+        progress,
+        lateral: lat,
+        x: s.x + s.nx * offset,
+        y: s.y + Math.sin(s.bank) * offset,
+        z: s.z + s.nz * offset,
+      });
+    }
+  });
+
   return {
     id: config.id,
     name: config.name,
@@ -402,6 +469,7 @@ function createTrack(config: {
     boostPads,
     itemBoxes,
     ramps,
+    coins,
   };
 }
 

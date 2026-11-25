@@ -1176,7 +1176,7 @@ test('Kart Clash: Speed classes, Item modes, Tier 3 Ultra Mini-Turbo, and Slipst
   p2.angle = 0;
   p2.speed = 25;
 
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 40; i++) {
     p1.x = 0;
     p1.z = 20;
     p2.x = 0;
@@ -1967,4 +1967,234 @@ test('Quip Clash keeps hostData.round and hostData.totalRounds as actual rounds 
   assert.equal(state.hostData.totalRounds, 1);
   assert.equal(state.hostData.promptNumber, 2);
   assert.equal(state.hostData.totalPrompts, 3);
+});
+
+test('Kart Clash Stage 1: coin spawns across all 6 tracks, collection, top speed, and drop on spinout', async () => {
+  const { TRACK_LIST } = await import('./kart-tracks');
+  const { MAX_COINS } = await import('./kart-shared');
+  const {
+    buildKartRacers,
+    createKartSimulation,
+    fireKartItem,
+    getKartSnapshot,
+    stepKartSimulation,
+    stopKartSimulation,
+  } = await import('./kart-physics');
+
+  const wrapDist = (a: number, b: number) => {
+    const d = Math.abs(a - b);
+    return Math.min(d, 1 - d);
+  };
+
+  for (const track of TRACK_LIST) {
+    assert.ok(track.coins.length >= 24 && track.coins.length <= 30, `${track.id}: has 24-30 coins (got ${track.coins.length})`);
+    for (const c of track.coins) {
+      assert.ok(c.progress >= 0.04 && c.progress <= 0.93, `${track.id}: coin ${c.id} avoids start/finish (${c.progress})`);
+      for (const r of track.ramps) {
+        assert.ok(wrapDist(c.progress, r.progress) >= 0.025, `${track.id}: coin ${c.id} avoids ramp ${r.id}`);
+      }
+      const boxProgresses = [...new Set(track.itemBoxes.map((b) => b.progress))];
+      for (const bp of boxProgresses) {
+        assert.ok(wrapDist(c.progress, bp) >= 0.02, `${track.id}: coin ${c.id} avoids item row ${bp}`);
+      }
+    }
+  }
+
+  const racers = buildKartRacers([
+    { id: 'p1', name: 'Coiner', avatar: '🪙', avatarColor: '#facc15' },
+    { id: 'p2', name: 'Zapper', avatar: '⚡', avatarColor: '#38bdf8' },
+  ], false, 2);
+  const sim = createKartSimulation({
+    roomCode: 'TEST_COINS',
+    raceId: 'r-coins',
+    trackId: 'sunny-circuit',
+    racers,
+    speedClass: '150cc',
+  });
+  sim.countdownMs = 0;
+
+  // Measure top speed with 0 coins vs 10 coins from the exact same straight position
+  const p1 = sim.karts['p1'];
+  const p2 = sim.karts['p2'];
+  p2.finished = true;
+  for (const c of sim.coins) c.respawnTimer = 99;
+  const resetToStraight = () => {
+    const s0 = sim.track.samples[2];
+    p1.x = s0.x;
+    p1.z = s0.z;
+    p1.angle = s0.angle;
+    p1.velAngle = s0.angle;
+    p1.sampleIdx = 2;
+    p1.lateralOffset = 0;
+    p1.offRoad = false;
+    p1.boostTimer = 0;
+    p1.starTimer = 0;
+    p1.slipstreamTimer = 0;
+    p1.slipstreamActive = false;
+    p1.rank = 1;
+    p1.speed = 60;
+  };
+  resetToStraight();
+  p1.coins = 0;
+  for (let i = 0; i < 60; i++) stepKartSimulation(sim, 1 / 30);
+  const speed0 = p1.speed;
+
+  // Collect coins via sim.coins
+  p1.coins = 0;
+  p1.boostTimer = 0;
+  sim.stats.coinsCollected['p1'] = 0;
+  for (let i = 0; i < 12; i++) {
+    const coin = sim.coins[i];
+    coin.respawnTimer = 0;
+    p1.x = coin.x;
+    p1.z = coin.z;
+    p1.airTimer = 0;
+    stepKartSimulation(sim, 1 / 30);
+  }
+  assert.equal(p1.coins, MAX_COINS, 'coins cap at MAX_COINS (10)');
+  assert.equal(sim.stats.coinsCollected['p1'], 12, 'coinsCollected tracks total pickups');
+  assert.ok(sim.events.some((e) => e.type === 'coin' && e.kartId === 'p1'), 'collecting a coin emits coin event');
+
+  const snapWithCoins = getKartSnapshot(sim);
+  assert.equal(snapWithCoins.coins.length, sim.coins.length, 'snapshot exposes coins');
+  assert.equal(snapWithCoins.karts.find((k) => k.id === 'p1')?.coins, MAX_COINS);
+
+  // Measure top speed with 10 coins from the same straight position
+  resetToStraight();
+  p1.coins = MAX_COINS;
+  for (let i = 0; i < 60; i++) stepKartSimulation(sim, 1 / 30);
+  assert.ok(p1.speed > speed0 * 1.05, `10 coins increase top speed (${p1.speed.toFixed(1)} vs ${speed0.toFixed(1)})`);
+
+  // Banana / spinout drops up to 3 coins
+  p1.coins = 5;
+  p1.hitImmuneTimer = 0;
+  p1.starTimer = 0;
+  sim.hazards.push({
+    id: 'haz_coin_drop',
+    kind: 'banana',
+    ownerId: 'p2',
+    targetId: null,
+    x: p1.x,
+    z: p1.z,
+    vx: 0,
+    vz: 0,
+    angle: 0,
+    progress: p1.progress,
+    bouncesLeft: 0,
+    ttl: 10,
+    age: 2,
+  });
+  stepKartSimulation(sim, 1 / 30);
+  assert.equal(p1.coins, 2, 'spinning out drops 3 coins');
+
+  // Lightning drops up to 3 coins too (clamped at 0)
+  p2.heldItem = 'lightning';
+  fireKartItem(sim, 'p2');
+  assert.equal(p1.coins, 0, 'lightning drops up to 3 coins without going negative');
+
+  stopKartSimulation('TEST_COINS');
+});
+
+test('Kart Clash Stage 1: drift hop, drift_tier events, countdown launchRev, slipstream event, and highlights', async () => {
+  const { KART_STAT_BARS, DRIFT_TIER_LABELS } = await import('./kart-shared');
+  assert.equal(DRIFT_TIER_LABELS[3], 'ULTRA TURBO');
+  assert.equal(KART_STAT_BARS.rocket.speed, 5);
+  assert.equal(KART_STAT_BARS.bruiser.weight, 5);
+
+  const {
+    buildKartRacers,
+    createKartSimulation,
+    getKartSnapshot,
+    stepKartSimulation,
+    stopKartSimulation,
+    updateKartInput,
+  } = await import('./kart-physics');
+
+  const racers = buildKartRacers([
+    { id: 'p1', name: 'Drifter', avatar: '🏎️', avatarColor: '#38bdf8' },
+    { id: 'p2', name: 'Draftee', avatar: '🚀', avatarColor: '#f97316' },
+  ], false, 2);
+
+  const sim = createKartSimulation({
+    roomCode: 'TEST_STAGE1_MECH',
+    raceId: 'r-s1',
+    trackId: 'sunny-circuit',
+    racers,
+  });
+
+  // Countdown revving exposes launchRev
+  sim.waitingForOrientation = false;
+  updateKartInput('TEST_STAGE1_MECH', 'p1', { drift: true, isHorizontal: true });
+  for (let i = 0; i < 15; i++) stepKartSimulation(sim, 1 / 30);
+  const countdownSnap = getKartSnapshot(sim);
+  const p1Countdown = countdownSnap.karts.find((k) => k.id === 'p1')!;
+  assert.ok(p1Countdown.launchRev > 0.4, `countdown revving exposes launchRev (${p1Countdown.launchRev})`);
+
+  // Finish countdown cleanly and test hop + drift_tier (1, 2, 3)
+  updateKartInput('TEST_STAGE1_MECH', 'p1', { drift: false });
+  sim.countdownMs = 0;
+  const p1 = sim.karts['p1'];
+  const p2 = sim.karts['p2'];
+  p1.speed = 40;
+  updateKartInput('TEST_STAGE1_MECH', 'p1', { drift: true, steer: 0.8 });
+  stepKartSimulation(sim, 1 / 30);
+  assert.ok(p1.hopTimer > 0, 'initiating drift sets hopTimer');
+  assert.ok(sim.events.some((e) => e.type === 'hop' && e.kartId === 'p1'), 'initiating drift emits hop event');
+
+  const seenTiers = new Set<number>();
+  for (let i = 0; i < 80; i++) {
+    p1.speed = 45;
+    stepKartSimulation(sim, 1 / 30);
+    for (const ev of sim.events) {
+      if (ev.type === 'drift_tier' && ev.kartId === 'p1' && ev.value) seenTiers.add(ev.value);
+    }
+  }
+  assert.deepEqual([...seenTiers].sort(), [1, 2, 3], 'charging drift emits drift_tier 1, 2, and 3');
+  updateKartInput('TEST_STAGE1_MECH', 'p1', { drift: false, steer: 0 });
+  stepKartSimulation(sim, 1 / 30);
+
+  // Slipstream activates slipstreaming (>0.35s) and triggers burst + slipstream event (>=1.6s)
+  p2.boostTimer = 0;
+  p2.slipstreamTimer = 0;
+  let sawSlipstreaming = false;
+  let sawSlipstreamEvent = false;
+  for (let i = 0; i < 55; i++) {
+    p1.x = 0;
+    p1.z = 20;
+    p1.angle = 0;
+    p1.speed = 30;
+    p2.x = 0;
+    p2.z = 12;
+    p2.angle = 0;
+    p2.speed = 30;
+    stepKartSimulation(sim, 1 / 30);
+    if (getKartSnapshot(sim).karts.find((k) => k.id === 'p2')?.slipstreaming) sawSlipstreaming = true;
+    if (sim.events.some((e) => e.type === 'slipstream' && e.kartId === 'p2')) sawSlipstreamEvent = true;
+  }
+  assert.ok(sawSlipstreaming, 'snapshot exposes slipstreaming=true during sustained tow');
+  assert.ok(sawSlipstreamEvent, 'slipstream burst emits slipstream event');
+  assert.ok(p2.boostTimer > 0.7, 'slipstream burst awards boost');
+  stopKartSimulation('TEST_STAGE1_MECH');
+
+  // Verify RACE_RESULTS exposes highlights via kart-clash room lifecycle
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  const k1 = (await engine.joinRoom(roomCode, 'Ace')) as { playerId: string };
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+  const rState = (await engine.getGameState(roomCode))!;
+  const aceId = engine.resolvePlayerKey(rState, k1.playerId)!;
+  const { getKartSimulation } = await import('./kart-physics');
+  const rSim = getKartSimulation(roomCode)!;
+  rSim.stats.drifts[aceId] = 4;
+  rSim.stats.coinsCollected[aceId] = 7;
+  rSim.stats.tricks[aceId] = 2;
+
+  await engine.processAction(roomCode, hostId, { type: 'FINISH_KART_RACE' });
+  const doneState = (await engine.getGameState(roomCode))!;
+  assert.equal(doneState.phase, 'RACE_RESULTS');
+  assert.equal(doneState.hostData.highlights.length, 3, 'hostData.highlights caps at 3 non-zero highlights');
+  assert.equal(doneState.hostData.highlights[0].label, 'Drift King');
+  assert.equal(doneState.hostData.highlights[0].racerName, 'Ace');
+  assert.deepEqual(doneState.playerData[aceId].highlights, doneState.hostData.highlights, 'playerData exposes highlights too');
+  stopKartSimulation(roomCode);
 });

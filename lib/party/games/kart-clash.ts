@@ -380,6 +380,47 @@ function launchRace(state: GameState, trackId: TrackId) {
   }
 }
 
+function buildRaceHighlights(
+  sim: KartRaceSim | undefined,
+): { emoji: string; label: string; racerName: string; detail: string }[] {
+  if (!sim) return [];
+  const categories: {
+    emoji: string;
+    label: string;
+    map: Record<string, number> | undefined;
+    detail: (n: number) => string;
+  }[] = [
+    { emoji: '💨', label: 'Drift King', map: sim.stats.drifts, detail: (n) => `${n} drift${n === 1 ? '' : 's'}` },
+    { emoji: '🎯', label: 'Shell Sniper', map: sim.stats.hits, detail: (n) => `${n} hit${n === 1 ? '' : 's'}` },
+    { emoji: '🪙', label: 'Coin Magnet', map: sim.stats.coinsCollected, detail: (n) => `${n} coin${n === 1 ? '' : 's'}` },
+    { emoji: '🤸', label: 'Stunt Pro', map: sim.stats.tricks, detail: (n) => `${n} trick${n === 1 ? '' : 's'}` },
+  ];
+
+  const highlights: { emoji: string; label: string; racerName: string; detail: string }[] = [];
+  for (const cat of categories) {
+    if (!cat.map) continue;
+    let bestId: string | null = null;
+    let bestVal = 0;
+    for (const [id, val] of Object.entries(cat.map)) {
+      const kart = sim.karts[id];
+      if (!kart || val <= 0) continue;
+      if (val > bestVal || (val === bestVal && bestId && sim.karts[bestId]?.isBot && !kart.isBot)) {
+        bestId = id;
+        bestVal = val;
+      }
+    }
+    if (bestId && bestVal > 0) {
+      highlights.push({
+        emoji: cat.emoji,
+        label: cat.label,
+        racerName: sim.karts[bestId].name,
+        detail: cat.detail(bestVal),
+      });
+    }
+  }
+  return highlights.slice(0, 3);
+}
+
 function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
   if (state.phase === 'RACE_RESULTS') return;
   const cfg = getKartConfig(state);
@@ -526,6 +567,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
   }
 
   const cup = cupStandings(state, gained);
+  const highlights = buildRaceHighlights(activeSim);
   const deadline = Date.now() + RESULTS_SECONDS * 1000;
   state.hostData = {
     phase: 'RACE_RESULTS',
@@ -541,6 +583,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     standings,
     cupStandings: cup,
     fastestLap: activeSim?.stats?.fastestLap || null,
+    highlights,
     winnerId: overallWinner?.id || null,
     winnerName: overallWinner?.name || 'Winner',
     winnerIsBot: Boolean(overallWinner?.isBot),
@@ -578,6 +621,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
       winnerIsBot: Boolean(overallWinner?.isBot),
       topHumanName: overallWinner?.name || topHuman?.name || 'Winner',
       fastestLap: activeSim?.stats?.fastestLap || null,
+      highlights,
       standings: standings.slice(0, 8),
     };
   }
