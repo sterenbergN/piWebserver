@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { DRIFT_TIER_COLORS, DRIFT_TIER_LABELS, ITEM_META, KartItemType, MAX_COINS, RANK_COLORS, ROULETTE_EMOJIS, formatRaceTime, ordinal } from '@/lib/party/kart-shared';
+import { DRIFT_TIER_COLORS, DRIFT_TIER_LABELS, ITEM_META, KartItemType, LAUNCH_FLOOD_SEC, LAUNCH_WARN_SEC, MAX_COINS, RANK_COLORS, ROULETTE_EMOJIS, formatRaceTime, ordinal } from '@/lib/party/kart-shared';
 import { REACTIONS } from '@/lib/party/avatars';
 import type { KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 import type { TrackId } from '@/lib/party/kart-tracks';
@@ -1525,9 +1525,9 @@ export default function KartClashPhoneController({
     const driftCharge = myKart?.driftCharge || 0;
     const tierColor = DRIFT_TIER_COLORS[tier];
     const launchRev = myKart?.launchRev || 0;
-    const launchOverheat = launchRev > 1.2;
+    const launchOverheat = launchRev > LAUNCH_WARN_SEC;
     const launchSweet = launchRev > 0.05 && !launchOverheat;
-    const launchPct = Math.min(100, Math.round((launchRev / 1.5) * 100));
+    const launchPct = Math.min(100, Math.round((launchRev / LAUNCH_FLOOD_SEC) * 100));
     const isSpunOut = (myKart?.spinOutTimer || 0) > 0;
     const isStar = (myKart?.starTimer || 0) > 0;
     const isBoost = (myKart?.boostTimer || 0) > 0;

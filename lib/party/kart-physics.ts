@@ -1,11 +1,13 @@
 import { partyEmitter } from './emitter';
-import { BOT_LEVELS, KART_STYLES, KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle, MAX_COINS } from './kart-shared';
+import { BOT_LEVELS, KART_STYLES, KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle, LAUNCH_FLOOD_SEC, MAX_COINS } from './kart-shared';
 import {
   KART_TRACKS,
   KartTrack,
   TrackId,
+  HIDDEN_RAMP_LAUNCH_T,
   getMovingHazardPosition,
   getTrackBoundsAt,
+  megaRampHalfWidth,
   isShortcutWallOpening,
   projectOntoShortcut,
   projectOntoTrack,
@@ -1120,8 +1122,8 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
 
   // While traversing a hidden shortcut, steer cleanly down its Bezier centerline
   if (k.activeShortcutId) {
-    const scMatch = projectOntoShortcut(track, k.x, k.z);
-    if (scMatch && scMatch.shortcut.id === k.activeShortcutId) {
+    const scMatch = projectOntoShortcut(track, k.x, k.z, { only: k.activeShortcutId, reach: Infinity });
+    if (scMatch) {
       const pts = scMatch.shortcut.points;
       const curIdx = Math.min(pts.length - 1, Math.round(scMatch.t * (pts.length - 1)));
       const aimPt = pts[Math.min(pts.length - 1, curIdx + 3)];
@@ -1159,6 +1161,8 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
       : -1
     : 0;
 
+  let shortcutLane = 0;
+  let shortcutAim: { x: number; z: number } | null = null;
   if (!k.finished) {
     if (activeSplit) {
       laneTarget = splitSide * (Math.max(bounds.dividerHalf, aheadBounds.dividerHalf) + 5.5);
@@ -1185,19 +1189,28 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
       }
     }
 
-    // Optionally take a nearby hidden shortcut when holding a boost
+    // Some bots take a nearby hidden shortcut. Boost gates and hidden ramps pay for themselves;
+    // an off-road cut only pays with a boost in hand.
     const wantsShortcut =
       (sim.botLevel === 'mean' && k.aiPhase < Math.PI) ||
       (sim.botLevel === 'normal' && k.aiPhase < 1.25);
-    if (
-      wantsShortcut &&
-      !activeSplit &&
-      (k.boostTimer > 0 || k.heldItem === 'mushroom' || k.heldItem === 'golden_mushroom' || k.heldItem === 'star')
-    ) {
+    const hasBoost = k.boostTimer > 0 || k.heldItem === 'mushroom' || k.heldItem === 'golden_mushroom' || k.heldItem === 'star';
+    // Line up along the road edge well ahead (a fast kart needs ~3s to cross over), then head
+    // straight for the start of the path through the wall opening
+    if (wantsShortcut && !activeSplit) {
       for (const sc of track.shortcuts) {
+        if (sc.kind === 'offroad-cut' && !hasBoost) continue;
         const gap = forwardGap(track, k.progress, sc.entryProgress);
-        if (gap > 2 && gap < 55) {
-          laneTarget = sc.side * bounds.wallWidth * 0.95;
+        const past = forwardGap(track, sc.entryProgress, k.progress);
+        if (gap < Math.max(45, k.speed * 0.9) || past < 25) {
+          shortcutLane = bounds.wallWidth * 0.78;
+          laneTarget = sc.side * shortcutLane;
+          shortcutAim = sc.points[Math.min(2, sc.points.length - 1)];
+          break;
+        }
+        if (gap < Math.max(160, k.speed * 3.5)) {
+          laneTarget = sc.side * halfRoad * 0.95;
+          shortcutLane = halfRoad * 0.95;
           break;
         }
       }
@@ -1240,14 +1253,15 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
   if (bounds.dividerHalf > 0.5 && Math.abs(laneTarget) < bounds.dividerHalf + 2.5) {
     laneTarget = (Math.sign(laneTarget) || splitSide || 1) * (bounds.dividerHalf + 3.0);
   }
-  laneTarget = clamp(laneTarget, -halfRoad * (nearOpening ? 1.15 : 0.82), halfRoad * (nearOpening ? 1.15 : 0.82));
+  const laneLimit = shortcutLane || halfRoad * (nearOpening ? 1.15 : 0.82);
+  laneTarget = clamp(laneTarget, -laneLimit, laneLimit);
   k.aiLane += (laneTarget - k.aiLane) * Math.min(1, dt * 2.4);
 
   // Pure pursuit at a look-ahead that grows with speed
   const lookIdx = Math.round(Math.max(14, Math.abs(k.speed) * 0.55) / ds);
   const aim = track.samples[(k.sampleIdx + lookIdx) % m];
-  const tx = aim.x + aim.nx * k.aiLane - k.x;
-  const tz = aim.z + aim.nz * k.aiLane - k.z;
+  const tx = shortcutAim ? shortcutAim.x - k.x : aim.x + aim.nx * k.aiLane - k.x;
+  const tz = shortcutAim ? shortcutAim.z - k.z : aim.z + aim.nz * k.aiLane - k.z;
   const headingErr = normalizeAngle(Math.atan2(tx, tz) - k.angle);
   let steer = clamp(-headingErr * 2.6, -1, 1);
 
@@ -1304,7 +1318,7 @@ function stepCountdown(sim: KartRaceSim, dt: number, dtMs: number) {
     for (const k of Object.values(sim.karts)) {
       if (k.isBot) {
         if (Math.random() < 0.3) k.boostTimer = 0.9;
-      } else if (k.launchHoldTimer > 1.5) {
+      } else if (k.launchHoldTimer > LAUNCH_FLOOD_SEC) {
         k.spinOutTimer = 0.7;
         setKartStatus(k, '💥 ENGINE FLOODED!', sim.elapsedMs, 1500);
         pushEvent(sim, 'stall', k);
@@ -1324,7 +1338,9 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
   const cls = SPEED_CLASSES[sim.speedClass];
   const style = KART_STYLES[k.kartStyle] || KART_STYLES.classic;
   const bounds = getTrackBoundsAt(track, k.progress);
-  const activeScBefore = k.activeShortcutId ? projectOntoShortcut(track, k.x, k.z) : null;
+  const activeScBefore = k.activeShortcutId
+    ? projectOntoShortcut(track, k.x, k.z, { only: k.activeShortcutId, reach: Infinity })
+    : null;
 
   if (k.statusText && sim.elapsedMs > k.statusUntil) {
     k.statusText = null;
@@ -1470,7 +1486,7 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
     const aheadSample = track.samples[(k.sampleIdx + lookIdx) % m];
     let assistHeading: number;
     let refAngle = sample.angle;
-    if (activeScBefore && activeScBefore.shortcut.id === k.activeShortcutId) {
+    if (activeScBefore) {
       const scAngle = Math.atan2(activeScBefore.point.tx, activeScBefore.point.tz);
       assistHeading = scAngle + clamp(activeScBefore.lateral * 0.025, -0.35, 0.35);
       refAngle = scAngle;
@@ -1590,7 +1606,8 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
   if (!k.activeShortcutId) {
     const nearSide = (Math.sign(proj.lateralOffset) || 1) as -1 | 1;
     if (isShortcutWallOpening(track, proj.progress, nearSide) && Math.abs(proj.lateralOffset) > projBounds.wallWidth * 0.55) {
-      const scEnter = projectOntoShortcut(track, k.x, k.z);
+      // Within one path width of the path (true distance, so not off either end of it)
+      const scEnter = projectOntoShortcut(track, k.x, k.z, { reach: 1 });
       if (scEnter && scEnter.t < 0.85) {
         k.activeShortcutId = scEnter.shortcut.id;
         if (k.lastShortcutLap[scEnter.shortcut.id] !== k.lap) {
@@ -1599,11 +1616,6 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
           setKartStatus(k, `✨ SECRET: ${scEnter.shortcut.name.toUpperCase()}!`, sim.elapsedMs, 1800);
           if (scEnter.shortcut.kind === 'boost-gate') {
             k.boostTimer = Math.max(k.boostTimer, 1.5);
-          } else if (scEnter.shortcut.kind === 'hidden-ramp') {
-            k.airDuration = 1.15;
-            k.airTimer = 1.15;
-            k.trickDone = false;
-            pushEvent(sim, 'jump', k);
           }
         }
       }
@@ -1612,13 +1624,18 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
 
   let newProgress = proj.progress;
   if (k.activeShortcutId) {
-    const scMatch = projectOntoShortcut(track, k.x, k.z);
-    if (scMatch && scMatch.shortcut.id === k.activeShortcutId) {
+    // Always the nearest point on the kart's own shortcut, so the kart can never lose the path
+    // and get snapped back to a far-off main-road barrier
+    const scMatch = projectOntoShortcut(track, k.x, k.z, { only: k.activeShortcutId, reach: Infinity });
+    if (scMatch) {
       const scMaxLat = scMatch.shortcut.width * 0.55;
       if (Math.abs(scMatch.lateral) > scMaxLat) {
+        // Push back across the path only (never along it), easing in from a wide entry
         const scSide = Math.sign(scMatch.lateral);
-        k.x = scMatch.point.x + scMatch.point.nx * scSide * scMaxLat;
-        k.z = scMatch.point.z + scMatch.point.nz * scSide * scMaxLat;
+        const excess = Math.abs(scMatch.lateral) - scMaxLat;
+        const push = Math.min(excess, Math.max(0.6, Math.abs(k.speed) * dt * 0.5));
+        k.x -= scMatch.point.nx * scSide * push;
+        k.z -= scMatch.point.nz * scSide * push;
         const scAngle = Math.atan2(scMatch.point.tx, scMatch.point.tz);
         const rel = normalizeAngle(k.velAngle - scAngle);
         k.velAngle = normalizeAngle(scAngle + rel * 0.35);
@@ -1626,6 +1643,20 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
       }
       newProgress = scMatch.point.progress;
       k.offRoad = k.airTimer <= 0 && scMatch.shortcut.kind === 'offroad-cut';
+      // A hidden ramp climbs along the path and launches the kart off its top, where it is drawn
+      const rampKey = `${scMatch.shortcut.id}:ramp`;
+      if (
+        scMatch.shortcut.kind === 'hidden-ramp' &&
+        k.airTimer <= 0 &&
+        scMatch.t >= HIDDEN_RAMP_LAUNCH_T &&
+        k.lastFeatureLap[rampKey] !== k.lap
+      ) {
+        k.lastFeatureLap[rampKey] = k.lap;
+        k.airDuration = 1.15;
+        k.airTimer = 1.15;
+        k.trickDone = false;
+        pushEvent(sim, 'jump', k);
+      }
       if (scMatch.t >= 0.96 || (scMatch.t > 0.15 && Math.abs(proj.lateralOffset) < projBounds.wallWidth - 1.5)) {
         k.activeShortcutId = null;
         k.sampleIdx = projectOntoTrack(track, k.x, k.z).sampleIdx;
@@ -1795,7 +1826,9 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
     } else if (feat.kind === 'mega_ramp') {
       if (k.airTimer <= 0) {
         const gap = forwardGap(track, feat.progress, k.progress);
-        if (gap < 8 && k.speed > 20 && k.lastFeatureLap[feat.id] !== k.lap && Math.abs(k.lateralOffset) < projBounds.halfRoad) {
+        // Only karts that actually drive up the drawn ramp take off
+        const onRamp = Math.abs(k.lateralOffset - feat.lateral * projBounds.halfRoad) < megaRampHalfWidth(projBounds.halfRoad);
+        if (gap < 8 && k.speed > 20 && k.lastFeatureLap[feat.id] !== k.lap && onRamp) {
           k.lastFeatureLap[feat.id] = k.lap;
           k.airDuration = 1.45;
           k.airTimer = 1.45;

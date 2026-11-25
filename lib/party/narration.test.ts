@@ -8,6 +8,7 @@ import {
   splitForSpeech,
   voiceRate,
   waitForVoices,
+  SpeechDucker,
   type SpeechVoicesSource,
   type VoiceInfo,
 } from './narration';
@@ -132,4 +133,69 @@ test('waitForVoices waits past initial local voices until voiceschanged delivers
   });
   assert.equal(fallbackResolved, true);
   assert.equal(listeners.size, 0);
+});
+
+/** A SpeechDucker on fake timers, recording every duck/un-duck it applies. */
+function fakeDucker() {
+  const applied: boolean[] = [];
+  let nextId = 1;
+  const pending = new Map<number, { fn: () => void; at: number }>();
+  let now = 0;
+  const ducker = new SpeechDucker((d) => applied.push(d), {
+    set: (fn, ms) => {
+      const id = nextId++;
+      pending.set(id, { fn, at: now + ms });
+      return id as unknown as ReturnType<typeof setTimeout>;
+    },
+    clear: (t) => {
+      pending.delete(t as unknown as number);
+    },
+  });
+  const advance = (ms: number) => {
+    now += ms;
+    for (const [id, p] of [...pending]) {
+      if (p.at <= now) {
+        pending.delete(id);
+        p.fn();
+      }
+    }
+  };
+  return { ducker, applied, advance };
+}
+
+test('pausing or muting the narrator mid-line brings the music back up', () => {
+  const { ducker, applied, advance } = fakeDucker();
+  ducker.begin(1, 5000);
+  assert.equal(ducker.ducked, true);
+  // hush() and switching Voice off both cancel speech; the cancelled line never reports its end
+  ducker.release();
+  assert.equal(ducker.ducked, false, 'music is no longer ducked');
+  advance(6000);
+  ducker.end(1);
+  assert.deepEqual(applied, [true, false], 'nothing more happens once released');
+});
+
+test("an older line finishing doesn't un-duck or disarm the safety timer of the line after it", () => {
+  const { ducker, applied, advance } = fakeDucker();
+  ducker.begin(1, 5000); // commentary A
+  ducker.begin(2, 5000); // the lap-record line, queued behind A
+  ducker.end(1); // A finishes
+  assert.equal(ducker.ducked, true, "B is still to be spoken, so the music stays down");
+  // B's end event is lost (speech engines do this); its guard must still bring the music back
+  advance(5001);
+  assert.equal(ducker.ducked, false, 'the newest line’s guard un-ducks');
+  assert.deepEqual(applied, [true, true, false]);
+});
+
+test('a queued line’s safety timer counts from when it actually starts speaking', () => {
+  const { ducker, advance } = fakeDucker();
+  ducker.begin(1, 5000);
+  advance(4000); // still waiting for the line before it
+  ducker.started(1, 5000);
+  advance(2000); // 6s after begin, 2s into speech
+  assert.equal(ducker.ducked, true, 'not cut short while it is still being spoken');
+  advance(3001);
+  assert.equal(ducker.ducked, false);
+  ducker.started(7, 5000); // a stale id changes nothing
+  assert.equal(ducker.ducked, false);
 });

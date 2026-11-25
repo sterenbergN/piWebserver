@@ -2308,3 +2308,131 @@ test('Kart Clash Stage B1: longer tracks, split paths, hidden shortcuts, boost r
 
   stopKartSimulation('TEST_STAGE_B1');
 });
+
+test('Kart Clash: driving into a shortcut opening never teleports the kart onto the path', async () => {
+  const { TRACK_LIST, getTrackBoundsAt, sampleTrackAtProgress } = await import('./kart-tracks');
+  const { buildKartRacers, createKartSimulation, stepKartSimulation, stopKartSimulation, updateKartInput } = await import('./kart-physics');
+  for (const t of TRACK_LIST) {
+    for (const sc of t.shortcuts) {
+      // Inside the wall opening, a little before the path starts and out past the barrier line
+      for (const [dp, f] of [[-0.003, 1.2], [-0.003, 0.6], [-0.008, 0.6], [0.004, 1.2]]) {
+        const room = `SC_TP_${t.id}`;
+        const sim = createKartSimulation({ roomCode: room, raceId: 'r', trackId: t.id, racers: buildKartRacers([{ id: 'p1', name: 'H', avatar: '🙂', avatarColor: '#fff' }], false, 1) });
+        sim.countdownMs = 0;
+        const k = sim.karts['p1'];
+        const p = sc.entryProgress + dp;
+        const s = sampleTrackAtProgress(t, p);
+        const lat = sc.side * getTrackBoundsAt(t, p).wallWidth * f;
+        k.x = s.x + s.nx * lat;
+        k.z = s.z + s.nz * lat;
+        k.angle = s.angle;
+        k.velAngle = s.angle;
+        k.speed = 50;
+        k.progress = p;
+        k.sampleIdx = Math.round(p * t.samples.length) % t.samples.length;
+        const x0 = k.x;
+        const z0 = k.z;
+        updateKartInput(room, 'p1', { steer: 0 });
+        stepKartSimulation(sim, 1 / 30);
+        const moved = Math.hypot(k.x - x0, k.z - z0);
+        assert.ok(moved < 5, `${t.id} ${sc.id} dp=${dp} f=${f}: kart moved ${moved.toFixed(1)} in one tick`);
+        stopKartSimulation(room);
+      }
+    }
+  }
+});
+
+test('Kart Clash: a hidden ramp shortcut climbs and launches at its drawn top, not at the entrance', async () => {
+  const { KART_TRACKS, HIDDEN_RAMP_LAUNCH_T, HIDDEN_RAMP_LIFT, HIDDEN_RAMP_START_INDEX, HIDDEN_RAMP_TOP_INDEX, projectOntoShortcut } = await import('./kart-tracks');
+  const { buildKartRacers, createKartSimulation, stepKartSimulation, stopKartSimulation, updateKartInput } = await import('./kart-physics');
+  const t = KART_TRACKS['neon-starway'];
+  const sc = t.shortcuts.find((s) => s.kind === 'hidden-ramp')!;
+  assert.ok(sc, 'neon starway has a hidden ramp shortcut');
+  // The ramp's lift is part of the path heights, so the scene, karts and coins all sit on it
+  // (the hills under the path slope too, so compare neighbouring points)
+  const top = sc.points[HIDDEN_RAMP_TOP_INDEX];
+  const after = sc.points[HIDDEN_RAMP_TOP_INDEX + 1];
+  const beforeRamp = sc.points[HIDDEN_RAMP_START_INDEX - 1];
+  const rampStart = sc.points[HIDDEN_RAMP_START_INDEX];
+  assert.ok(top.y - after.y > HIDDEN_RAMP_LIFT * 0.8, `the path drops away after the lip (${(top.y - after.y).toFixed(2)})`);
+  assert.ok(Math.abs(rampStart.y - beforeRamp.y) < HIDDEN_RAMP_LIFT * 0.6, 'the climb starts smoothly');
+  const rampCoin = t.coins.find((c) => c.x === sc.points[8].x && c.z === sc.points[8].z);
+  assert.ok(rampCoin && Math.abs(rampCoin.y - sc.points[8].y) < 1e-9, 'a coin on the ramp sits on the raised path');
+
+  const room = 'SC_RAMP';
+  const sim = createKartSimulation({ roomCode: room, raceId: 'r', trackId: t.id, racers: buildKartRacers([{ id: 'p1', name: 'H', avatar: '🙂', avatarColor: '#fff' }], false, 1) });
+  sim.countdownMs = 0;
+  const k = sim.karts['p1'];
+  const p = sc.points[1];
+  k.x = p.x;
+  k.z = p.z;
+  k.angle = Math.atan2(p.tx, p.tz);
+  k.velAngle = k.angle;
+  k.speed = 50;
+  k.progress = p.progress;
+  k.sampleIdx = Math.round(p.progress * t.samples.length);
+  let launchT: number | null = null;
+  let airborneAtEntry = false;
+  for (let i = 0; i < 30 * 8 && launchT === null; i++) {
+    const m = projectOntoShortcut(t, k.x, k.z, { only: sc.id, reach: Infinity })!;
+    const aim = sc.points[Math.min(sc.points.length - 1, Math.round(m.t * (sc.points.length - 1)) + 3)];
+    let err = Math.atan2(aim.x - k.x, aim.z - k.z) - k.angle;
+    err = Math.atan2(Math.sin(err), Math.cos(err));
+    updateKartInput(room, 'p1', { steer: Math.max(-1, Math.min(1, -err * 2.6)), drift: false });
+    stepKartSimulation(sim, 1 / 30);
+    if (i === 0) airborneAtEntry = k.airTimer > 0;
+    if (k.airTimer > 0 && launchT === null) launchT = m.t;
+  }
+  assert.equal(airborneAtEntry, false, 'no jump at the shortcut entrance');
+  assert.ok(launchT !== null, 'the ramp launches the kart');
+  assert.ok(launchT! >= HIDDEN_RAMP_LAUNCH_T - 0.06, `launch happens at the ramp top (t=${launchT!.toFixed(2)})`);
+  stopKartSimulation(room);
+});
+
+test('Kart Clash: a mega ramp only launches karts that drive up the drawn ramp', async () => {
+  const { KART_TRACKS, getTrackBoundsAt, megaRampHalfWidth, sampleTrackAtProgress } = await import('./kart-tracks');
+  const { buildKartRacers, createKartSimulation, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  const t = KART_TRACKS['sunny-circuit'];
+  const mega = t.features.find((f) => f.kind === 'mega_ramp')!;
+  const p = mega.progress + 0.001;
+  const b = getTrackBoundsAt(t, p);
+  const s = sampleTrackAtProgress(t, p);
+  const half = megaRampHalfWidth(b.halfRoad);
+  assert.ok(half + 2 < b.halfRoad, 'the ramp is narrower than the road');
+  for (const [lat, shouldJump] of [[0, true], [half + 2, false]] as const) {
+    const room = `MEGA_${lat}`;
+    const sim = createKartSimulation({ roomCode: room, raceId: 'r', trackId: t.id, racers: buildKartRacers([{ id: 'p1', name: 'H', avatar: '🙂', avatarColor: '#fff' }], false, 1) });
+    sim.countdownMs = 0;
+    const k = sim.karts['p1'];
+    k.x = s.x + s.nx * lat;
+    k.z = s.z + s.nz * lat;
+    k.angle = s.angle;
+    k.velAngle = s.angle;
+    k.speed = 55;
+    k.progress = p;
+    k.sampleIdx = Math.round(p * t.samples.length);
+    stepKartSimulation(sim, 1 / 30);
+    assert.equal(k.airTimer > 1, shouldJump, `kart at lateral ${lat.toFixed(1)} ${shouldJump ? 'launches' : 'stays on the road'}`);
+    stopKartSimulation(room);
+  }
+});
+
+test('Kart Clash: Mean bots line up and take boost-gate shortcuts without needing a boost', async () => {
+  const { KART_TRACKS } = await import('./kart-tracks');
+  const { buildKartRacers, createKartSimulation, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  for (const id of ['canyon-driftway', 'frostbite-peak', 'volcano-inferno'] as const) {
+    const t = KART_TRACKS[id];
+    const room = `BOT_SC_${id}`;
+    const sim = createKartSimulation({ roomCode: room, raceId: 'r', trackId: id, racers: buildKartRacers([], true, 1), itemsMode: 'pure', botLevel: 'mean' });
+    sim.countdownMs = 0;
+    const bot = Object.values(sim.karts)[0];
+    bot.aiPhase = 0.5; // one of the bots that likes shortcuts
+    let took = false;
+    for (let i = 0; i < 30 * 120 && bot.lap < 2 && !took; i++) {
+      stepKartSimulation(sim, 1 / 30);
+      took = sim.events.some((e) => e.type === 'shortcut' && e.kartId === bot.id);
+    }
+    assert.ok(took, `${t.id}: a mean bot takes the ${t.shortcuts[0].kind} shortcut on its first lap`);
+    stopKartSimulation(room);
+  }
+});

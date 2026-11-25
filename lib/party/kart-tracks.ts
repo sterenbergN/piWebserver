@@ -162,6 +162,23 @@ export interface KartTrack {
 
 export const SAMPLE_COUNT = 600;
 
+/** Every shortcut is a 20-point Bezier path. */
+export const SHORTCUT_POINT_COUNT = 20;
+/**
+ * A 'hidden-ramp' shortcut climbs from this point index to HIDDEN_RAMP_TOP_INDEX and launches the
+ * kart off the top. The lift is baked into ShortcutPoint.y so physics, scene and coins agree.
+ */
+export const HIDDEN_RAMP_START_INDEX = 5;
+export const HIDDEN_RAMP_TOP_INDEX = 11;
+export const HIDDEN_RAMP_LIFT = 2.2;
+/** Shortcut path progress (0..1 along its points) where a hidden ramp launches the kart. */
+export const HIDDEN_RAMP_LAUNCH_T = HIDDEN_RAMP_TOP_INDEX / (SHORTCUT_POINT_COUNT - 1);
+
+/** Half the width of a mega ramp, shared by the physics trigger and the drawn ramp. */
+export function megaRampHalfWidth(halfRoad: number): number {
+  return Math.min(halfRoad * 0.8, Math.max(10, halfRoad * 0.72));
+}
+
 /** Every course is drawn at this size. The one place to make all maps larger or smaller. */
 const TRACK_SCALE = 1.65;
 
@@ -414,13 +431,21 @@ export function isShortcutWallOpening(
   );
 }
 
+/**
+ * The nearest point on a shortcut path within `reach` × its width (true distance, so a kart off
+ * either end of the path does not match). `only` limits it to one shortcut, and with
+ * `reach: Infinity` always finds that shortcut's nearest point (for a kart already on it).
+ */
 export function projectOntoShortcut(
   track: Pick<KartTrack, 'shortcuts'>,
   x: number,
   z: number,
+  opts: { only?: string | null; reach?: number } = {},
 ): { shortcut: ShortcutDef; point: ShortcutPoint; dist: number; lateral: number; t: number } | null {
+  const reach = opts.reach ?? 0.65;
   let best: { shortcut: ShortcutDef; point: ShortcutPoint; dist: number; lateral: number; t: number } | null = null;
   for (const sc of track.shortcuts) {
+    if (opts.only && sc.id !== opts.only) continue;
     const pts = sc.points;
     if (pts.length < 2) continue;
     for (let i = 0; i < pts.length - 1; i++) {
@@ -444,7 +469,7 @@ export function projectOntoShortcut(
       const dz = z - pz;
       const dist = Math.hypot(dx, dz);
       const lateral = dx * nx + dz * nz;
-      if (Math.abs(lateral) < sc.width * 0.65 && (!best || dist < best.dist)) {
+      if (dist < sc.width * reach && (!best || dist < best.dist)) {
         best = {
           shortcut: sc,
           point: {
@@ -669,14 +694,18 @@ function createTrack(config: {
     const p1y = (p0y + p2y) * 0.5 + (sc.kind === 'hidden-ramp' ? 2.5 : 0);
     const p1z = chordMidZ + midS.nz * sc.side * 6;
 
-    const count = 20;
+    const count = SHORTCUT_POINT_COUNT;
     const rawPts: { x: number; y: number; z: number; progress: number }[] = [];
     for (let i = 0; i < count; i++) {
       const t = i / (count - 1);
       const omt = 1 - t;
+      const rampLift =
+        sc.kind === 'hidden-ramp' && i >= HIDDEN_RAMP_START_INDEX && i <= HIDDEN_RAMP_TOP_INDEX
+          ? ((i - HIDDEN_RAMP_START_INDEX) / (HIDDEN_RAMP_TOP_INDEX - HIDDEN_RAMP_START_INDEX)) * HIDDEN_RAMP_LIFT
+          : 0;
       rawPts.push({
         x: omt * omt * p0x + 2 * omt * t * p1x + t * t * p2x,
-        y: omt * omt * p0y + 2 * omt * t * p1y + t * t * p2y,
+        y: omt * omt * p0y + 2 * omt * t * p1y + t * t * p2y + rampLift,
         z: omt * omt * p0z + 2 * omt * t * p1z + t * t * p2z,
         progress: sc.entryProgress + (sc.exitProgress - sc.entryProgress) * t,
       });

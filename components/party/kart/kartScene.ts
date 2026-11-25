@@ -12,9 +12,11 @@ import {
   getMovingHazardPosition,
   getTrackBoundsAt,
   isShortcutWallOpening,
+  megaRampHalfWidth,
   projectOntoShortcut,
   projectOntoTrack,
   sampleTrackAtProgress,
+  splitEnvelope,
 } from '@/lib/party/kart-tracks';
 import type { KartEvent, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 
@@ -23,6 +25,8 @@ type SnapKart = KartTelemetrySnapshot['karts'][number];
 type SnapHazard = KartTelemetrySnapshot['hazards'][number];
 
 const IDEAL_TILE_ASPECT = 1.6;
+/** Body tint while a golden mushroom is active (shared so it isn't rebuilt every frame). */
+const GOLDEN_SHROOM_COLOR = new THREE.Color('#ffd700');
 
 /** Grid for the split screen, chosen to keep each tile close to a widescreen shape. */
 export function computeSplitGrid(count: number, aspect = 16 / 9): { cols: number; rows: number } {
@@ -738,7 +742,6 @@ function sailboatGeometry() {
 
 function findStraightawaySpots(track: KartTrack, count: number) {
   const m = track.samples.length;
-  const wall = track.wallWidth;
   const candidates: number[] = [];
   for (let i = 0; i < m; i++) {
     const s = track.samples[i];
@@ -754,11 +757,16 @@ function findStraightawaySpots(track: KartTrack, count: number) {
       return Math.min(d, 1 - d) > 0.025;
     });
     if (!clearItem) continue;
+    // Keep the legs out of widened split sections and shortcut mouths
+    if (track.splitSections.some((sp) => splitEnvelope(s.progress, sp) > 0)) continue;
+    if (isShortcutWallOpening(track, s.progress, -1) || isShortcutWallOpening(track, s.progress, 1)) continue;
+    const wall = getTrackBoundsAt(track, s.progress).wallWidth;
     const legOff = wall + 4.8;
     const lx = s.x - s.nx * legOff;
     const lz = s.z - s.nz * legOff;
     const rx = s.x + s.nx * legOff;
     const rz = s.z + s.nz * legOff;
+    if (projectOntoShortcut(track, lx, lz, { reach: 1.5 }) || projectOntoShortcut(track, rx, rz, { reach: 1.5 })) continue;
     let clear = true;
     for (let j = 0; j < m; j += 2) {
       const o = track.samples[j];
@@ -1301,10 +1309,13 @@ function buildSplitStructures(
         const cLeft = new THREE.Color('#ec4899');
         const cRight = new THREE.Color('#22d3ee');
         const pushStrip = (off0: number, off1: number, c: THREE.Color) => {
-          const pA = [s0.x + s0.nx * (off0 - 0.4), s0.y + Math.sin(s0.bank) * off0 + 0.25, s0.z + s0.nz * (off0 - 0.4)];
-          const pB = [s0.x + s0.nx * (off0 + 0.4), s0.y + Math.sin(s0.bank) * off0 + 0.25, s0.z + s0.nz * (off0 + 0.4)];
-          const pC = [s1.x + s1.nx * (off1 - 0.4), s1.y + Math.sin(s1.bank) * off1 + 0.25, s1.z + s1.nz * (off1 - 0.4)];
-          const pD = [s1.x + s1.nx * (off1 + 0.4), s1.y + Math.sin(s1.bank) * off1 + 0.25, s1.z + s1.nz * (off1 + 0.4)];
+          // A strip beside the raised deck rides up with it
+          const l0 = b0.upperSide !== 0 && Math.sign(off0) === b0.upperSide ? b0.upperLift : 0;
+          const l1 = b1.upperSide !== 0 && Math.sign(off1) === b1.upperSide ? b1.upperLift : 0;
+          const pA = [s0.x + s0.nx * (off0 - 0.4), s0.y + Math.sin(s0.bank) * off0 + l0 + 0.25, s0.z + s0.nz * (off0 - 0.4)];
+          const pB = [s0.x + s0.nx * (off0 + 0.4), s0.y + Math.sin(s0.bank) * off0 + l0 + 0.25, s0.z + s0.nz * (off0 + 0.4)];
+          const pC = [s1.x + s1.nx * (off1 - 0.4), s1.y + Math.sin(s1.bank) * off1 + l1 + 0.25, s1.z + s1.nz * (off1 - 0.4)];
+          const pD = [s1.x + s1.nx * (off1 + 0.4), s1.y + Math.sin(s1.bank) * off1 + l1 + 0.25, s1.z + s1.nz * (off1 + 0.4)];
           neonRailPos.push(...pA, ...pC, ...pB, ...pB, ...pC, ...pD);
           for (let k = 0; k < 6; k++) neonRailCol.push(c.r, c.g, c.b);
         };
@@ -1330,8 +1341,9 @@ function buildSplitStructures(
           : split.theme === 'mesa-pillar' ? 7.4
           : split.theme === 'ice-bridge' ? 6.2
           : 2.3;
-      const yTop0 = s0.y + hPeak * e0;
-      const yTop1 = s1.y + hPeak * e1;
+      // Stand clear of a raised deck on one side so it doesn't bury the divider
+      const yTop0 = s0.y + Math.max(hPeak * e0, b0.upperLift + 0.6 * e0);
+      const yTop1 = s1.y + Math.max(hPeak * e1, b1.upperLift + 0.6 * e1);
       const yBot0 = s0.y - 2.0;
       const yBot1 = s1.y - 2.0;
 
@@ -1491,8 +1503,8 @@ function buildShortcuts(
 
     for (let i = 0; i < pts.length; i++) {
       const pt = pts[i];
-      const lift = sc.kind === 'hidden-ramp' && i >= 5 && i <= 11 ? ((i - 5) / 6) * 2.2 : 0;
-      const y = pt.y + 0.08 + lift;
+      // A hidden ramp's climb is already baked into pt.y
+      const y = pt.y + 0.08;
       pos.push(pt.x - pt.nx * hw, y, pt.z - pt.nz * hw);
       pos.push(pt.x + pt.nx * hw, y, pt.z + pt.nz * hw);
       const t = i / (pts.length - 1);
@@ -1508,8 +1520,7 @@ function buildShortcuts(
 
       if (i < pts.length - 1) {
         const pt1 = pts[i + 1];
-        const lift1 = sc.kind === 'hidden-ramp' && i + 1 >= 5 && i + 1 <= 11 ? ((i - 4) / 6) * 2.2 : 0;
-        const y1 = pt1.y + 0.14 + lift1;
+        const y1 = pt1.y + 0.14;
         for (const sgn of [-1, 1]) {
           const p0A = [pt.x + pt.nx * sgn * (hw - 0.5), y + 0.06, pt.z + pt.nz * sgn * (hw - 0.5)];
           const p0B = [pt.x + pt.nx * sgn * (hw + 0.3), y + 0.06, pt.z + pt.nz * sgn * (hw + 0.3)];
@@ -1591,6 +1602,8 @@ interface MovingHazardVisual {
   spinTarget: THREE.Object3D;
   pulsePart?: THREE.Object3D;
   prevLat: number;
+  /** Last direction of travel across the road, kept while it stands still. */
+  facing: 1 | -1;
 }
 
 function buildMovingHazardMesh(
@@ -1966,7 +1979,7 @@ const PARTICLE_FRAG = `
   void main() {
     float d = length(gl_PointCoord - 0.5) * 2.0;
     if (d > 1.0) discard;
-    float a = smoothstep(1.0, 0.25, d) * vAlpha;
+    float a = (1.0 - smoothstep(0.25, 1.0, d)) * vAlpha;
     gl_FragColor = vec4(vColor, a);
     #include <colorspace_fragment>
   }
@@ -2145,7 +2158,7 @@ export class KartScene {
   private size = { w: 0, h: 0 };
   private clearColor: THREE.Color;
   private dummy = new THREE.Object3D();
-  private rampSpans: { start: number; end: number; height: number; latMin?: number; latMax?: number }[] = [];
+  private rampSpans: { start: number; end: number; height: number; latMin?: number; latMax?: number; profile?: 'mega' }[] = [];
   private movingHazards: MovingHazardVisual[] = [];
   private boostRings: { ring: THREE.Object3D; inner: THREE.Object3D }[] = [];
   private aerialStars: THREE.Object3D[] = [];
@@ -2263,8 +2276,8 @@ export class KartScene {
             float wave1 = sin(vUv.x * 22.0 + uTime * 0.45 + sin(vUv.x * 7.0 - uTime * 0.25) * 1.4);
             float wave2 = sin(vUv.x * 38.0 - uTime * 0.35 + vUv.y * 3.0);
             float curtain = pow(max(0.0, 0.55 + 0.45 * wave1), 2.2) * (0.65 + 0.35 * wave2);
-            float vFade = smoothstep(0.0, 0.28, vUv.y) * smoothstep(1.0, 0.22, vUv.y);
-            float hFade = smoothstep(0.0, 0.14, vUv.x) * smoothstep(1.0, 0.86, vUv.x);
+            float vFade = smoothstep(0.0, 0.28, vUv.y) * (1.0 - smoothstep(0.22, 1.0, vUv.y));
+            float hFade = smoothstep(0.0, 0.14, vUv.x) * (1.0 - smoothstep(0.86, 1.0, vUv.x));
             vec3 emerald = vec3(0.14, 0.96, 0.62);
             vec3 cyan = vec3(0.22, 0.78, 0.98);
             vec3 violet = vec3(0.68, 0.34, 0.96);
@@ -2826,11 +2839,12 @@ export class KartScene {
         const MEGA_H = 4.2;
         const startP = feat.progress - MEGA_LEN / track.totalLength;
         const bFeat = getTrackBoundsAt(track, feat.progress);
-        const rampHalf = Math.min(bFeat.halfRoad * 0.8, Math.max(10, bFeat.halfRoad * 0.72));
+        // Same width the physics launches from
+        const rampHalf = megaRampHalfWidth(bFeat.halfRoad);
         const centerOff = feat.lateral * bFeat.halfRoad;
         const latMin = Math.max(-bFeat.halfRoad, centerOff - rampHalf);
         const latMax = Math.min(bFeat.halfRoad, centerOff + rampHalf);
-        this.rampSpans.push({ start: startP, end: feat.progress, height: MEGA_H, latMin, latMax });
+        this.rampSpans.push({ start: startP, end: feat.progress, height: MEGA_H, latMin, latMax, profile: 'mega' });
 
         const pos: number[] = [];
         const uv: number[] = [];
@@ -2913,6 +2927,7 @@ export class KartScene {
           spinTarget: haz.spinTarget,
           pulsePart: haz.pulsePart,
           prevLat: initPos.lateralOffset,
+          facing: 1,
         });
       }
     }
@@ -3509,10 +3524,12 @@ export class KartScene {
     }
   }
 
-  private roadY(x: number, z: number, hint?: number) {
+  /** Road height under a point. Pass `hintOut` to keep the found sample for the next call's `hint`. */
+  private roadY(x: number, z: number, hint?: number, hintOut?: { hint?: number }) {
     const sc = projectOntoShortcut(this.track, x, z);
     if (sc && sc.dist < sc.shortcut.width * 0.65) return sc.point.y;
     const p = projectOntoTrack(this.track, x, z, hint);
+    if (hintOut) hintOut.hint = p.sampleIdx;
     const b = getTrackBoundsAt(this.track, p.progress);
     const lift = b.upperSide !== 0 && Math.sign(p.lateralOffset) === b.upperSide ? b.upperLift : 0;
     return p.sample.y + Math.sin(p.sample.bank) * p.lateralOffset + lift;
@@ -3810,6 +3827,10 @@ export class KartScene {
         this.dummy.scale.setScalar(0);
         this.dummy.updateMatrix();
         this.itemBoxMesh.setMatrixAt(slot.index, this.dummy.matrix);
+        // Hide its shadow too, or a dark disc stays on the road
+        this.itemBoxShadowMesh.setMatrixAt(slot.index, this.dummy.matrix);
+        this.itemBoxMesh.instanceMatrix.needsUpdate = true;
+        this.itemBoxShadowMesh.instanceMatrix.needsUpdate = true;
         this.itemBoxSlots.delete(id);
       }
     }
@@ -3823,7 +3844,11 @@ export class KartScene {
         if (lateral < r.latMin || lateral > r.latMax) continue;
       }
       const p = progress < r.start && r.start > 0.9 ? progress + 1 : progress;
-      if (p >= r.start && p <= r.end) return ((p - r.start) / (r.end - r.start)) * r.height;
+      if (p >= r.start && p <= r.end) {
+        const f = (p - r.start) / (r.end - r.start);
+        // Follow the same curve the ramp mesh is drawn with
+        return r.profile === 'mega' ? r.height * (0.4 * f * f + 0.6 * f) + 0.1 : f * r.height;
+      }
     }
     return 0;
   }
@@ -3867,7 +3892,8 @@ export class KartScene {
       let roadBank = s.bank;
       let refAngle = s.angle;
       if (k.onShortcut) {
-        const sc = projectOntoShortcut(track, v.x, v.z);
+        // Reach the full path width so a kart at the wide entry still finds the path
+        const sc = projectOntoShortcut(track, v.x, v.z, { reach: 1 });
         if (sc) {
           groundY = sc.point.y;
           roadSlope = 0;
@@ -3960,7 +3986,7 @@ export class KartScene {
         v.auraMat.opacity = 0.6 + Math.sin(this.time * 16) * 0.2;
       } else {
         v.bodyMat.color.copy(v.baseColor);
-        if (k.goldenShroomTimer > 0) v.bodyMat.color.lerp(new THREE.Color('#ffd700'), 0.5);
+        if (k.goldenShroomTimer > 0) v.bodyMat.color.lerp(GOLDEN_SHROOM_COLOR, 0.5);
         const flashing = k.spinOutTimer <= 0 && k.hasIncomingShell && Math.sin(this.time * 18) > 0;
         v.aura.visible = flashing;
         if (flashing) {
@@ -4168,7 +4194,7 @@ export class KartScene {
           obj.rotation.x = this.time * 0.9;
           break;
         case 'spiny_shell': {
-          const y = this.roadY(obj.position.x, obj.position.z, u.hint);
+          const y = this.roadY(obj.position.x, obj.position.z, u.hint, u);
           obj.position.y = y + 7 + Math.sin(this.time * 6) * 0.6;
           obj.rotation.y = this.time * 9;
           this.additive.emit(obj.position.x, obj.position.y, obj.position.z, 0, 0, 0, '#38bdf8', 1.5, 0.4);
@@ -4469,18 +4495,24 @@ export class KartScene {
     this.updateGantry(snap);
 
     // Animate moving hazards, boost rings & aerial mega-ramp stars
-    const raceSec = (snap.raceTimeMs || 0) / 1000;
+    // Race time only arrives at 30Hz, so carry it forward between snapshots like the karts do
+    const racing = !snap.waitingForOrientation && snap.countdownMs <= 0;
+    const raceSec = (snap.raceTimeMs || 0) / 1000 + (racing ? Math.min(0.1, (now - this.snapshotAt) / 1000) : 0);
     for (const mh of this.movingHazards) {
       const pos = getMovingHazardPosition(this.track, mh.def, raceSec);
       mh.group.position.set(pos.x, pos.y, pos.z);
       mh.shadow.position.set(pos.x, pos.y + 0.12, pos.z);
       const dLat = pos.lateralOffset - mh.prevLat;
       mh.prevLat = pos.lateralOffset;
+      // Direction of travel from the patrol's own sine (getMovingHazardPosition), so snapshot jitter
+      // can't flip it; it holds at the turnaround
+      const latVel = Math.cos(raceSec * (mh.def.speed ?? 1.6) + (mh.def.phase ?? 0)) * (mh.def.speed ?? 1.6);
+      if (Math.abs(latVel) >= 1e-3) mh.facing = latVel > 0 ? 1 : -1;
       if (this.track.biome === 'canyon' || this.track.biome === 'snow') {
         mh.group.rotation.y = pos.angle;
         mh.spinTarget.rotation.z -= dLat * 0.42;
       } else if (this.track.biome === 'beach') {
-        mh.group.rotation.y = pos.angle + (dLat >= 0 ? -Math.PI / 2 : Math.PI / 2);
+        mh.group.rotation.y = pos.angle + (mh.facing > 0 ? -Math.PI / 2 : Math.PI / 2);
         if (mh.pulsePart) mh.pulsePart.position.y = Math.abs(Math.sin(this.time * 10)) * 0.35;
       } else if (this.track.biome === 'lava') {
         mh.group.rotation.y = pos.angle;

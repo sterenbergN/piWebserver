@@ -95,7 +95,8 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
         ),
       };
     case 'kart-clash:RACE_RESULTS': {
-      const winnerName = h.winnerName || (h.topHumanId ? state.players[h.topHumanId]?.name : null);
+      // winnerName is always set (it falls back to 'Winner'); only trust it with a winner behind it
+      const winnerName = h.winnerId ? h.winnerName : h.topHumanId ? state.players[h.topHumanId]?.name : null;
       return {
         sfx: 'fanfare',
         say: winnerName

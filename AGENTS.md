@@ -43,6 +43,7 @@ Work like a lead engineer: split big jobs, run the pieces in parallel, and check
 - **Nav "places found":** the found list must be saved on first use (`markFound`); the recent-pages list can't stand in for it.
 - **recharts y-axes:** a fixed `width` clips longer labels ("200.5"); size the axis from its labels.
 - **pdf.js** needs its worker path set (`/reader-assets/pdfjs-<version>/pdf.worker.min.mjs`); close documents with `doc.loadingTask.destroy()`.
+- **Kart shortcuts:** match a kart to a shortcut path by true distance (`projectOntoShortcut`), and while it's on one push it back only across the path. Snapping it to the nearest path point teleported karts 100+ units. Kart items-off mode is `'pure'` (there's no `'off'`).
 - **Tests:** `tsx --test` can't use top-level `await`. Tests that wait on background work should poll for the result rather than sleep a fixed time, which flakes when the whole suite runs.
 - **Windows shell:** long inline `python - <<'EOF'` scripts can fail with "unexpected EOF". Write the script to the scratchpad and run it instead.
 

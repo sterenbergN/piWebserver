@@ -5,6 +5,7 @@ import {
   DRIFT_TIER_COLORS,
   DRIFT_TIER_LABELS,
   ITEM_META,
+  LAUNCH_WARN_SEC,
   MAX_COINS,
   RANK_COLORS,
   ROULETTE_EMOJIS,
@@ -270,6 +271,7 @@ function RaceView({
   }, [onEnableSound]);
   const finalLapCalledRef = useRef(false);
   const finishCalledRef = useRef(false);
+  const rocketCalledRef = useRef(false);
   const lastBlueShellAnnounceRef = useRef('');
   const finalLapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -289,12 +291,13 @@ function RaceView({
     };
   }, []);
 
-  const speakCommentary = useCallback((text: string, urgent = false) => {
+  /** `urgent` cuts in now; `queue` plays right after the current line instead of being throttled. */
+  const speakCommentary = useCallback((text: string, urgent = false, queue = false) => {
     if (prefsRef.current?.voice === false) return;
     const now = Date.now();
-    if (!urgent && now - lastSpeakAtRef.current < 4500) return;
+    if (!urgent && !queue && now - lastSpeakAtRef.current < 4500) return;
     lastSpeakAtRef.current = now;
-    partyAudio.say(text);
+    partyAudio.say(text, { interrupt: !queue });
   }, []);
 
   const pushFeed = useCallback((text: string, color?: string) => {
@@ -316,7 +319,11 @@ function RaceView({
         break;
       case 'rocket':
         if (kart && !kart.isBot) {
-          speakCommentary(line(['{name} nails the rocket start!', 'Blistering launch from {name}!'], { name: kart.name }));
+          // Fires in the same tick as GO, so it follows the GO line rather than being throttled by it
+          if (!rocketCalledRef.current) {
+            rocketCalledRef.current = true;
+            speakCommentary(line(['{name} nails the rocket start!', 'Blistering launch from {name}!'], { name: kart.name }), false, true);
+          }
           pushFeed(`🚀 ${kart.avatar} ${kart.name} nailed a Rocket Start!`, '#facc15');
         }
         break;
@@ -387,6 +394,8 @@ function RaceView({
     audioRef.current = audio;
     audio.resume();
     audio.setPrefs(prefsRef.current?.music !== false, prefsRef.current?.sfx !== false);
+    // The narrator may already be mid-line when a new race's audio starts
+    audio.setDucking(partyAudio.speaking);
     if (snapRef.current) scene.setSnapshot(snapRef.current);
 
     let animId = 0;
@@ -434,6 +443,9 @@ function RaceView({
         lastBlueShellAnnounceRef.current = data.announcement;
         speakCommentary('Watch out! Blue shell incoming!');
         pushFeed(data.announcement, '#38bdf8');
+      } else if (!data.announcement) {
+        // Cleared, so the same launcher's next Blue Shell is called out again
+        lastBlueShellAnnounceRef.current = '';
       }
       const now = performance.now();
       if (now - lastHud >= HUD_INTERVAL_MS) {
@@ -557,7 +569,7 @@ function RaceView({
             {revvingHumans.length > 0 && (
               <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'center', marginTop: '0.55rem' }}>
                 {revvingHumans.map((k) => {
-                  const overheat = k.launchRev > 1.2;
+                  const overheat = k.launchRev > LAUNCH_WARN_SEC;
                   return (
                     <span
                       key={k.id}
@@ -722,6 +734,7 @@ export default function KartClashHostView({
   const [lapRecords, setLapRecords] = useState<Record<string, LapRecord>>({});
   const [newRecord, setNewRecord] = useState<LapRecord | null>(null);
   const soundPrefsRef = useRef(soundPrefs);
+  const recordLineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     soundPrefsRef.current = soundPrefs;
@@ -753,10 +766,16 @@ export default function KartClashHostView({
     }
     setLapRecords(next);
     setNewRecord(record);
-    if (soundPrefsRef.current?.voice !== false) {
-      partyAudio.say(`And a brand new lap record by ${record.name}!`, { interrupt: false });
-    }
+    if (soundPrefsRef.current?.voice === false) return;
+    // The results line starts ~250ms into this phase and cuts off anything already speaking,
+    // so queue the record call after it rather than before it
+    if (recordLineTimerRef.current) clearTimeout(recordLineTimerRef.current);
+    recordLineTimerRef.current = setTimeout(() => partyAudio.say(`And a brand new lap record by ${record.name}!`, { interrupt: false }), 900);
   }, [resultsKey]);
+
+  useEffect(() => () => {
+    if (recordLineTimerRef.current) clearTimeout(recordLineTimerRef.current);
+  }, []);
 
   // ─── Phase 1: HEAT_SETUP (Host-Controlled Tournament Heat Board) ─────────────
   if (state.phase === 'HEAT_SETUP') {

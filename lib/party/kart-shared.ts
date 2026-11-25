@@ -65,6 +65,10 @@ export const BOT_LEVELS: Record<KartBotLevel, { label: string; skill: number; ea
 };
 
 export const DRIFT_TIER_COLORS = ['#94a3b8', '#38bdf8', '#f97316', '#d946ef'] as const;
+/** Holding drift longer than this before GO floods the engine instead of giving a Rocket Start. */
+export const LAUNCH_FLOOD_SEC = 1.5;
+/** From here the rev gauge warns that the engine is about to flood. */
+export const LAUNCH_WARN_SEC = 1.2;
 export const DRIFT_TIER_LABELS = ['', 'MINI-TURBO', 'SUPER TURBO', 'ULTRA TURBO'] as const;
 export const MAX_COINS = 10;
 export const KART_STAT_BARS: Record<KartStyle, { speed: number; accel: number; turn: number; drift: number; weight: number }> = {

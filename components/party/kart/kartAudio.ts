@@ -511,6 +511,8 @@ export class KartAudio {
     const stepDur = 60 / tempo / 4; // sixteenth note
     const transpose = this.finalLap ? 2 : 0;
 
+    // After a stall (WebGL work, GC, a busy TV) skip the missed notes rather than playing them all at once
+    if (this.nextNoteTime < this.ctx.currentTime - 0.05) this.nextNoteTime = this.ctx.currentTime + 0.02;
     while (this.nextNoteTime < this.ctx.currentTime + 0.18) {
       const s = this.step;
       const bar = Math.floor(s / 16) % 8;

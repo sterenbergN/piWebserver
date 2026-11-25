@@ -2,7 +2,7 @@
 // plus sound effects — and a narrator voice via the browser's speech engine.
 // No audio files, so nothing to download or license.
 
-import { chooseVoice, hasQualityVoice, rankVoices, speakable, splitForSpeech, voiceRate, waitForVoices } from '@/lib/party/narration';
+import { SpeechDucker, chooseVoice, hasQualityVoice, rankVoices, speakable, splitForSpeech, voiceRate, waitForVoices } from '@/lib/party/narration';
 
 type Sfx = 'pop' | 'whoosh' | 'tick' | 'ding' | 'buzzer' | 'fanfare' | 'drumroll' | 'slam' | 'boo' | 'cheer';
 
@@ -43,7 +43,12 @@ class PartyAudio {
   private nextTime = 0;
   private speakingListeners = new Set<(speaking: boolean) => void>();
   private activeUtterances = new Set<SpeechSynthesisUtterance>();
-  private duckGuard: ReturnType<typeof setTimeout> | null = null;
+  // Music down while the narrator talks; only the newest line's end brings it back up.
+  private ducker = new SpeechDucker((down) => {
+    this.emitSpeaking(down);
+    if (!this.musicGain || !this.ctx) return;
+    this.musicGain.gain.setTargetAtTime(down ? 0.07 : 0.22, this.ctx.currentTime, down ? 0.1 : 0.3);
+  });
   prefs: SoundPrefs = { music: true, sfx: true, voice: true };
 
   onSpeaking(fn: (speaking: boolean) => void): () => void {
@@ -55,12 +60,11 @@ class PartyAudio {
     this.speakingListeners.forEach((fn) => fn(speaking));
   }
 
+  /** True while the narrator is talking (the music is ducked). */
+  get speaking() { return this.ducker.ducked; }
+
   private clearSpeechTracking() {
     this.activeUtterances.clear();
-    if (this.duckGuard) {
-      clearTimeout(this.duckGuard);
-      this.duckGuard = null;
-    }
   }
 
   /** Browsers only allow audio after a user gesture; call from a click. */
@@ -147,6 +151,8 @@ class PartyAudio {
     if (!this.ctx || !this.mood) return;
     const m = MOODS[this.mood];
     const eighth = 60 / m.bpm / 2;
+    // After a stall (busy tab, GC) skip the missed notes rather than playing them all at once
+    if (this.nextTime < this.ctx.currentTime - 0.05) this.nextTime = this.ctx.currentTime + 0.02;
     while (this.nextTime < this.ctx.currentTime + 0.2) {
       const bar = Math.floor(this.step / 8) % m.chords.length;
       const chord = m.chords[bar];
@@ -172,7 +178,7 @@ class PartyAudio {
       this.sayId++;
       this.clearSpeechTracking();
       speechSynthesis.cancel();
-      this.emitSpeaking(false);
+      this.ducker.release();
     }
   }
 
@@ -183,10 +189,8 @@ class PartyAudio {
     this.mood = m;
     this.sayId++;
     this.clearSpeechTracking();
-    if (typeof speechSynthesis !== 'undefined') {
-      speechSynthesis.cancel();
-      this.emitSpeaking(false);
-    }
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    this.ducker.release();
   }
 
   resumeMusic() {
@@ -220,19 +224,9 @@ class PartyAudio {
   private speakChunks(id: number, chunks: string[]) {
     if (id !== this.sayId || !this.prefs.voice) return;
     const voice = chooseVoice(speechSynthesis.getVoices(), this.prefs.voiceName);
-    const duck = (down: boolean) => {
-      this.emitSpeaking(down);
-      if (!this.musicGain || !this.ctx) return;
-      this.musicGain.gain.setTargetAtTime(down ? 0.07 : 0.22, this.ctx.currentTime, down ? 0.1 : 0.3);
-    };
-    duck(true);
-    if (this.duckGuard) clearTimeout(this.duckGuard);
-    this.duckGuard = setTimeout(() => {
-      if (id === this.sayId) {
-        this.duckGuard = null;
-        duck(false);
-      }
-    }, Math.max(5000, chunks.join(' ').length * 140));
+    // If the engine never reports the end, bring the music back after about the line's length
+    const guardMs = Math.max(5000, chunks.join(' ').length * 140);
+    this.ducker.begin(id, guardMs);
     speechSynthesis.resume(); // Chrome sometimes leaves the engine paused
     chunks.forEach((chunk, i) => {
       const u = new SpeechSynthesisUtterance(chunk);
@@ -241,15 +235,12 @@ class PartyAudio {
       u.pitch = 1;
       // Keep a strong reference until completion so Chromium doesn't GC the utterance mid-speech.
       this.activeUtterances.add(u);
+      // A queued line waits for the one before it, so its guard counts from when it really starts
+      if (i === 0) u.onstart = () => this.ducker.started(id, guardMs);
       const cleanup = () => {
         this.activeUtterances.delete(u);
-        if (i === chunks.length - 1) {
-          if (this.duckGuard) {
-            clearTimeout(this.duckGuard);
-            this.duckGuard = null;
-          }
-          if (id === this.sayId) duck(false);
-        }
+        // A line cut off by a newer one stays quiet: the newer line is about to duck again
+        if (i === chunks.length - 1 && id === this.sayId) this.ducker.end(id);
       };
       u.onend = cleanup;
       u.onerror = cleanup;

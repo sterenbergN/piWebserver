@@ -153,3 +153,64 @@ function breakLong(sentence: string): string[] {
   if (current) out.push(current);
   return out;
 }
+
+/**
+ * Keeps the music turned down while the narrator talks. Each line gets an id; only the newest
+ * line's end (or its safety timer, for engines that never fire `end`) turns the music back up,
+ * and stopping speech outright always does.
+ */
+export class SpeechDucker {
+  private current = 0;
+  private guard: ReturnType<typeof setTimeout> | null = null;
+  ducked = false;
+
+  constructor(
+    private apply: (ducked: boolean) => void,
+    private timers: {
+      set: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+      clear: (t: ReturnType<typeof setTimeout>) => void;
+    } = { set: (fn, ms) => setTimeout(fn, ms), clear: (t) => clearTimeout(t) },
+  ) {}
+
+  private setDucked(down: boolean) {
+    this.ducked = down;
+    this.apply(down);
+  }
+
+  private armGuard(id: number, ms: number) {
+    if (this.guard) this.timers.clear(this.guard);
+    this.guard = this.timers.set(() => {
+      if (id !== this.current) return;
+      this.guard = null;
+      this.setDucked(false);
+    }, ms);
+  }
+
+  /** Line `id` is about to be spoken; `guardMs` un-ducks if its end never arrives. */
+  begin(id: number, guardMs: number) {
+    this.current = id;
+    this.setDucked(true);
+    this.armGuard(id, guardMs);
+  }
+
+  /** Line `id` actually started (a queued line may wait for the one before it): restart its guard. */
+  started(id: number, guardMs: number) {
+    if (id === this.current) this.armGuard(id, guardMs);
+  }
+
+  /** Line `id` finished. An older line finishing changes nothing. */
+  end(id: number) {
+    if (id !== this.current) return;
+    if (this.guard) this.timers.clear(this.guard);
+    this.guard = null;
+    this.setDucked(false);
+  }
+
+  /** Speech was stopped (paused, voice switched off): bring the music back. */
+  release() {
+    this.current = -1;
+    if (this.guard) this.timers.clear(this.guard);
+    this.guard = null;
+    if (this.ducked) this.setDucked(false);
+  }
+}
