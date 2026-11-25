@@ -17,6 +17,7 @@ import PagesPanel from './PagesPanel';
 import { RecordingBar, RecordingsPanel, useRecorder } from './Recorder';
 import { keepNewFile, newFileId, scheduleSync, syncNow, watchNews, watchSync, type SyncState } from './sync';
 import { TemplateGrid, PaperSwatches } from './TemplatePicker';
+import FeedbackLink from '@/components/tickets/FeedbackLink';
 
 // A notebook, full screen: the canvas (engine.ts), with the toolbar, tool settings and panels
 // around it. The canvas draws outside React and tells this what's changed through its events.
@@ -855,6 +856,7 @@ export default function NotebookView({ notebook, startPage, returnTo, returnUrl,
                     ))}
                     <li><strong>Hold at the end of a stroke</strong><span>Straightens it.</span></li>
                   </ul>
+                  <FeedbackLink className="nt-btn nt-feedback" onOpen={() => setPanel(null)} />
                 </div>
               </>
             )}

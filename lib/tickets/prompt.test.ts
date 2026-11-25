@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildPrompt, displayName, parseReport } from './prompt';
-import { addComment, buildTicket, toMine, TicketInputError, type Ticket } from './tickets';
+import { addComment, applyPatch, buildTicket, linkTickets, toMine, TicketInputError, type Ticket } from './tickets';
 
 const mk = (over: Record<string, unknown> = {}, id = 'a', at = '2026-01-01T00:00:00Z', username = 'sam'): Ticket =>
   buildTicket({ kind: 'bug', message: 'Button broken', context: { path: '/golf', viewport: '390x664', errors: ['TypeError: x'] }, ...over }, { userId: 'u1', username }, { id, now: new Date(at) });
@@ -63,4 +63,31 @@ test('comments: only while open, clears the new dot, shows to the reporter', () 
   assert.throws(() => addComment(t, '  ', new Date()), TicketInputError);
   t.status = 'done';
   assert.throws(() => addComment(t, 'x', new Date()), TicketInputError);
+});
+
+test('reads an optional commit and related tickets from the report', () => {
+  const r = parseReport('```json\n[{"id":"a","status":"done","commit":"ABC1234","related":["b","b"," c ","a","../x",5]},{"id":"d","commit":"later"},{"id":"e","related":"f"}]\n```');
+  assert.deepEqual(r?.updates, [
+    { id: 'a', status: 'done', commit: 'abc1234', related: ['b', 'c'] },
+    { id: 'e', related: ['f'] },
+  ]);
+  assert.ok(r?.skipped.some((s) => s.includes('later') && s.includes('isn’t a commit')));
+  assert.ok(r?.skipped.some((s) => s.startsWith('d: nothing to change')));
+});
+
+test('the prompt asks for commit and related, and shows links and the recent timeline', () => {
+  const list = [mk({}, 'a'), mk({}, 'b')];
+  const [a] = list;
+  applyPatch(a, { reply: 'try reloading' }, new Date('2026-01-02T00:00:00Z'));
+  applyPatch(a, { status: 'done', reply: 'Fixed for real' }, new Date('2026-01-03T00:00:00Z'));
+  applyPatch(a, { status: 'open', reason: 'Still broken on my phone' }, new Date('2026-01-04T00:00:00Z'));
+  applyPatch(a, { note: 'secret plan' }, new Date('2026-01-04T00:00:00Z'));
+  linkTickets(list, 'a', 'b', 'duplicate_of', 'admin', new Date('2026-01-05T00:00:00Z'));
+  const p = buildPrompt([a]);
+  for (const s of ['"commit": "<short hash>"', '"related": [', 'Linked tickets: duplicate of b', 'Timeline (latest last)', 'reopened (done → open), because:', '> Still broken on my phone', 'earlier reply:', '> try reloading', 'linked as duplicate of b']) {
+    assert.ok(p.includes(s), s);
+  }
+  // The current reply is shown once, as the reply; the note only as the note.
+  assert.equal(p.split('Fixed for real').length - 1, 1);
+  assert.equal(p.split('secret plan').length - 1, 1);
 });

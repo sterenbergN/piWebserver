@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildPrompt, displayName, parseReport, type ParsedReport } from '@/lib/tickets/prompt';
+import type { LinkRelation, TicketEvent } from '@/lib/tickets/history';
 import type { Ticket } from '@/lib/tickets/tickets';
 import './TicketsPanel.css';
 
@@ -30,10 +31,18 @@ function age(iso: string): string {
   return `${Math.round(mins / 1440)}d`;
 }
 
-const firstLine = (t: Ticket) => {
+const firstLine = (t: Ticket, max = 90) => {
   const line = t.message.split('\n').find((l) => l.trim()) ?? t.message;
-  return line.length > 90 ? `${line.slice(0, 90)}…` : line;
+  return line.length > max ? `${line.slice(0, max)}…` : line;
 };
+
+const isClosed = (s: string) => s === 'done' || s === 'wontfix';
+const REL_LABEL: Record<LinkRelation, string> = { related: 'Related', duplicate_of: 'Duplicate of', duplicated_by: 'Duplicated by' };
+const REL_CHOICES: { id: LinkRelation; label: string }[] = [
+  { id: 'related', label: 'Related to' }, { id: 'duplicate_of', label: 'This is a duplicate of' }, { id: 'duplicated_by', label: 'This is duplicated by' },
+];
+const WHO_LABEL: Record<string, string> = { reporter: 'Reporter', admin: 'You', site: 'The site', claude: 'Claude' };
+const WHO_ICON: Record<string, string> = { reporter: '🙋', admin: '🛠️', site: '🤖', claude: '✳️' };
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -114,12 +123,24 @@ export default function TicketsPanel() {
     }
   }
 
-  async function save(t: Ticket, patch: Record<string, unknown>, done?: string) {
+  async function save(t: Ticket, patch: Record<string, unknown>, done?: string): Promise<boolean> {
     const res = await post(`/api/admin/tickets/${t.id}`, 'PATCH', patch);
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) { setNotice({ kind: 'error', text: body.error || 'Could not save that' }); return; }
-    merge([body.ticket]);
+    if (!res.ok) { setNotice({ kind: 'error', text: body.error || 'Could not save that' }); return false; }
+    // A link changes the other ticket too.
+    merge(body.changed ?? [body.ticket]);
     if (done) setNotice({ kind: 'success', text: done });
+    return true;
+  }
+
+  /** Open another ticket (from a link chip), showing it even if the filters hide it. */
+  function openTicket(id: string) {
+    const t = tickets.find((x) => x.id === id);
+    if (!t) { setNotice({ kind: 'error', text: 'That ticket is gone' }); return; }
+    if (!shown.some((x) => x.id === id)) { setFilter('all'); setKind('all'); }
+    if (openId !== id) void toggleOpen(t);
+    // After the previous card has closed, so the position is right.
+    setTimeout(() => document.getElementById(`tkp-${id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 80);
   }
 
   async function remove(t: Ticket) {
@@ -199,7 +220,7 @@ export default function TicketsPanel() {
         <div className="tkp-list">
           {loaded && shown.length === 0 && <p className="adm-muted">Nothing here.</p>}
           {shown.map((t) => (
-            <article key={t.id} className={`tkp-card${openId === t.id ? ' is-open' : ''}`}>
+            <article key={t.id} id={`tkp-${t.id}`} className={`tkp-card${openId === t.id ? ' is-open' : ''}`}>
               <div className="tkp-card-top">
                 <label className="tkp-pick" aria-label="Select for Claude">
                   <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSelect(t.id)} />
@@ -213,11 +234,12 @@ export default function TicketsPanel() {
                     <span className={`tkp-status is-${t.status}`}>{STATUS_LABEL[t.status] ?? t.status}</span>
                     <span>{t.context.path}</span><span>{displayName(t)}</span><span>{age(t.createdAt)}</span>
                     {(t.comments?.length ?? 0) > 0 && <span>💬 {t.comments!.length}</span>}
+                    {(t.links?.length ?? 0) > 0 && <span title="Linked tickets">🔗 {t.links!.length}</span>}
                     {t.auto && <span title={`Seen ${t.auto.count} times, last ${when(t.auto.lastSeen)}`}>🤖 ×{t.auto.count} · last {age(t.auto.lastSeen)}</span>}
                   </span>
                 </button>
               </div>
-              {openId === t.id && <Detail key={t.id} t={t} onSave={save} onDelete={remove} />}
+              {openId === t.id && <Detail key={t.id} t={t} tickets={tickets} onSave={save} onDelete={remove} onOpen={openTicket} />}
             </article>
           ))}
         </div>
@@ -291,10 +313,13 @@ function ReportCard({ tickets, onApplied, onError }: { tickets: Ticket[]; onAppl
     if (!known.length) return;
     setBusy(true);
     try {
-      const res = await post('/api/admin/tickets/bulk', 'POST', { updates: known });
+      // Unknown related ids are left out here; the server checks the rest again.
+      const updates = known.map((u) => ({ ...u, ...(u.related ? { related: u.related.filter((id) => byId.has(id)) } : {}) }));
+      const res = await post('/api/admin/tickets/bulk', 'POST', { updates, source: 'claude' });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || 'Could not apply that');
-      onApplied(body.changed, `Updated ${body.changed.length} ticket${body.changed.length === 1 ? '' : 's'}`);
+      const skippedLinks: string[] = body.skippedLinks ?? [];
+      onApplied(body.changed, `Updated ${body.changed.length} ticket${body.changed.length === 1 ? '' : 's'}${skippedLinks.length ? `. Links left out: ${skippedLinks.join('; ')}` : ''}`);
       setText(''); setReport(null); setOpen(false);
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Could not apply that');
@@ -319,8 +344,12 @@ function ReportCard({ tickets, onApplied, onError }: { tickets: Ticket[]; onAppl
             return (
               <div key={u.id} className="tkp-change">
                 <strong>{KIND_ICON[t.kind] ?? '📝'} {firstLine(t)}</strong>
-                {u.status && <span>{STATUS_LABEL[t.status]} → <b>{STATUS_LABEL[u.status]}</b></span>}
+                {u.status && u.status !== t.status && <span>{STATUS_LABEL[t.status]} → <b>{STATUS_LABEL[u.status]}</b>{isClosed(t.status) && !isClosed(u.status) ? ' (reopens it; the reply is the reason)' : ''}</span>}
                 {u.reply && <span className="tkp-quote">Reply: {u.reply}</span>}
+                {u.commit && <span>Commit <code>{u.commit}</code></span>}
+                {u.related && u.related.length > 0 && (
+                  <span>Links to: {u.related.map((id) => (byId.has(id) ? `${id} (${firstLine(byId.get(id)!, 40)})` : `${id} (no such ticket, skipped)`)).join(', ')}</span>
+                )}
               </div>
             );
           })}
@@ -334,13 +363,19 @@ function ReportCard({ tickets, onApplied, onError }: { tickets: Ticket[]; onAppl
   );
 }
 
-function Detail({ t, onSave, onDelete }: {
+function Detail({ t, tickets, onSave, onDelete, onOpen }: {
   t: Ticket;
-  onSave: (t: Ticket, patch: Record<string, unknown>, done?: string) => Promise<void>;
+  tickets: Ticket[];
+  onSave: (t: Ticket, patch: Record<string, unknown>, done?: string) => Promise<boolean>;
   onDelete: (t: Ticket) => Promise<void>;
+  onOpen: (id: string) => void;
 }) {
   const [reply, setReply] = useState(t.reply?.text ?? '');
   const [note, setNote] = useState(t.note ?? '');
+  // Reopening a closed ticket asks why first.
+  const [reopen, setReopen] = useState<{ to: string; reason: string } | null>(null);
+  const [commit, setCommit] = useState('');
+  const byId = useMemo(() => new Map(tickets.map((x) => [x.id, x])), [tickets]);
   const c = t.context;
   const rows: [string, string | undefined][] = [
     ['Account', `${t.username} (${t.userId})`],
@@ -355,12 +390,26 @@ function Detail({ t, onSave, onDelete }: {
     ['Device', c.userAgent],
   ];
 
+  function pickStatus(to: string) {
+    if (to === t.status) return;
+    if (isClosed(t.status) && !isClosed(to)) { setReopen({ to, reason: '' }); return; }
+    setReopen(null);
+    void onSave(t, { status: to });
+  }
+
+  async function confirmReopen() {
+    if (!reopen?.reason.trim()) return;
+    if (await onSave(t, { status: reopen.to, reason: reopen.reason }, 'Reopened')) setReopen(null);
+  }
+
+  const validCommit = /^[0-9a-f]{7,40}$/i.test(commit.trim());
+
   return (
     <div className="tkp-detail">
       <div className="tkp-meta">
         <span className="adm-badge">{KIND_ICON[t.kind]} {t.kind}</span>
         {t.severity && <span className="adm-badge is-warn">{SEVERITY_LABEL[t.severity] ?? t.severity}</span>}
-        <span className="adm-muted">{t.username} · {when(t.createdAt)}</span>
+        <span className="adm-muted">{t.username} · {when(t.createdAt)} · <code className="tkp-id">{t.id}</code></span>
       </div>
       <p className="tkp-message">{t.message}</p>
 
@@ -376,21 +425,33 @@ function Detail({ t, onSave, onDelete }: {
         </div>
       )}
 
-      {(t.comments ?? []).map((cm, i) => (
-        <div key={i} className="tkp-comment"><span className="adm-muted">Follow-up · {when(cm.at)}</span><p>{cm.text}</p></div>
-      ))}
-
       {t.image && (
         <a href={`/api/tickets/files/${t.image}`} target="_blank" rel="noreferrer"><img className="tkp-image" src={`/api/tickets/files/${t.image}`} alt="Attached by the sender" /></a>
       )}
 
       <p><a className="adm-link-btn" href={c.path} target="_blank" rel="noreferrer">Open {c.path} ↗</a></p>
 
+      <Links t={t} byId={byId} tickets={tickets} onSave={onSave} onOpen={onOpen} />
+
+      <h3 className="adm-h3">Timeline</h3>
+      <Timeline events={t.history ?? []} byId={byId} onOpen={onOpen} />
+
       <div className="tkp-row" role="group" aria-label="Status">
         {STATUSES.map((s) => (
-          <button key={s.id} type="button" className={`tkp-chip${t.status === s.id ? ' is-on' : ''}`} onClick={() => void onSave(t, { status: s.id })}>{s.label}</button>
+          <button key={s.id} type="button" className={`tkp-chip${t.status === s.id ? ' is-on' : ''}${reopen?.to === s.id ? ' is-pending' : ''}`} onClick={() => pickStatus(s.id)}>{s.label}</button>
         ))}
       </div>
+      {reopen && (
+        <div className="tkp-reopen">
+          <label className="adm-field">Why is it being reopened? {!t.auto && '(they will see this)'}
+            <textarea className="tkp-text" rows={2} maxLength={500} autoFocus value={reopen.reason} placeholder="e.g. Still happens on the phone" onChange={(e) => setReopen({ ...reopen, reason: e.target.value })} />
+          </label>
+          <div className="tkp-row">
+            <button type="button" className="tkp-btn is-primary" disabled={!reopen.reason.trim()} onClick={() => void confirmReopen()}>Reopen as {STATUS_LABEL[reopen.to]?.toLowerCase()}</button>
+            <button type="button" className="tkp-btn" onClick={() => setReopen(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {!t.auto && (<>
         <label className="adm-field">Reply (they will see this)
@@ -404,6 +465,11 @@ function Detail({ t, onSave, onDelete }: {
       </label>
       <div><button type="button" className="tkp-btn" disabled={note.trim() === (t.note ?? '')} onClick={() => void onSave(t, { note }, 'Note saved')}>Save note</button></div>
 
+      <form className="tkp-row" onSubmit={(e) => { e.preventDefault(); if (validCommit) void onSave(t, { commit: commit.trim() }, 'Commit recorded').then((ok) => { if (ok) setCommit(''); }); }}>
+        <input className="tkp-input tkp-commit-in" value={commit} maxLength={40} placeholder="Commit hash" aria-label="Commit that fixed it" spellCheck={false} autoCapitalize="off" onChange={(e) => setCommit(e.target.value)} />
+        <button type="submit" className="tkp-btn" disabled={!validCommit}>Record commit</button>
+      </form>
+
       <h3 className="adm-h3">What was captured</h3>
       <dl className="tkp-dl">
         {rows.filter((r): r is [string, string] => !!r[1]).map(([k, v]) => (<div key={k}><dt>{k}</dt><dd>{v}</dd></div>))}
@@ -413,4 +479,114 @@ function Detail({ t, onSave, onDelete }: {
       <div><button type="button" className="tkp-btn is-danger" onClick={() => void onDelete(t)}>Delete ticket</button></div>
     </div>
   );
+}
+
+/** A linked ticket as a chip: tap to open it. */
+function LinkChip({ id, rel, byId, onOpen, onRemove }: { id: string; rel?: LinkRelation; byId: Map<string, Ticket>; onOpen: (id: string) => void; onRemove?: () => void }) {
+  const other = byId.get(id);
+  return (
+    <span className={`tkp-link${other ? '' : ' is-gone'}`}>
+      <button type="button" className="tkp-link-open" disabled={!other} title={other ? other.message.slice(0, 200) : 'Deleted'} onClick={() => onOpen(id)}>
+        {rel && <span className="tkp-link-rel">{REL_LABEL[rel]}</span>}
+        {other ? <>{KIND_ICON[other.kind] ?? '📝'} {firstLine(other, 42)} <span className={`tkp-status is-${other.status}`}>{STATUS_LABEL[other.status] ?? other.status}</span></> : <code>{id}</code>}
+      </button>
+      {onRemove && <button type="button" className="tkp-link-x" aria-label="Remove link" onClick={onRemove}>✕</button>}
+    </span>
+  );
+}
+
+function Links({ t, byId, tickets, onSave, onOpen }: {
+  t: Ticket;
+  byId: Map<string, Ticket>;
+  tickets: Ticket[];
+  onSave: (t: Ticket, patch: Record<string, unknown>, done?: string) => Promise<boolean>;
+  onOpen: (id: string) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState('');
+  const [rel, setRel] = useState<LinkRelation>('related');
+  const links = t.links ?? [];
+  const linked = new Set(links.map((l) => l.id));
+  const q = query.trim().toLowerCase();
+  const matches = q.length < 2 ? [] : tickets
+    .filter((x) => x.id !== t.id && !linked.has(x.id) && (x.id.toLowerCase().startsWith(q) || x.message.toLowerCase().includes(q)))
+    .slice(0, 8);
+
+  async function link(id: string) {
+    if (await onSave(t, { link: { id, rel } }, 'Linked')) { setQuery(''); setAdding(false); }
+  }
+
+  return (
+    <div className="tkp-links">
+      {links.length > 0 && (
+        <div className="tkp-link-list">
+          {links.map((l) => (
+            <LinkChip key={l.id} id={l.id} rel={l.rel} byId={byId} onOpen={onOpen} onRemove={() => void onSave(t, { unlink: l.id }, 'Unlinked')} />
+          ))}
+        </div>
+      )}
+      {!adding ? (
+        <div><button type="button" className="tkp-btn" onClick={() => setAdding(true)}>🔗 Link a ticket</button></div>
+      ) : (
+        <div className="tkp-link-add">
+          <select className="tkp-input" value={rel} aria-label="Kind of link" onChange={(e) => setRel(e.target.value as LinkRelation)}>
+            {REL_CHOICES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+          </select>
+          <input className="tkp-input" type="search" autoFocus value={query} placeholder="Search by id or words…" aria-label="Find a ticket to link" onChange={(e) => setQuery(e.target.value)} />
+          {q.length >= 2 && matches.length === 0 && <p className="adm-muted" style={{ margin: 0 }}>No other ticket matches.</p>}
+          {matches.length > 0 && (
+            <ul className="tkp-link-results">
+              {matches.map((x) => (
+                <li key={x.id}>
+                  <button type="button" onClick={() => void link(x.id)}>
+                    <span>{KIND_ICON[x.kind] ?? '📝'} {firstLine(x, 70)}</span>
+                    <span className="tkp-sub"><span className={`tkp-status is-${x.status}`}>{STATUS_LABEL[x.status] ?? x.status}</span><code>{x.id}</code><span>{age(x.createdAt)}</span></span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div><button type="button" className="tkp-btn" onClick={() => { setAdding(false); setQuery(''); }}>Cancel</button></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The ticket's timeline, oldest first, newest last. */
+function Timeline({ events, byId, onOpen }: { events: TicketEvent[]; byId: Map<string, Ticket>; onOpen: (id: string) => void }) {
+  if (!events.length) return <p className="adm-muted">Nothing yet.</p>;
+  return (
+    <ol className="tkp-tl">
+      {events.map((e, i) => (
+        <li key={i} className={`tkp-ev is-${e.kind} by-${e.by}`}>
+          <div className="tkp-ev-head">
+            <span className="tkp-ev-who">{WHO_ICON[e.by] ?? '•'} {WHO_LABEL[e.by] ?? e.by}</span>
+            <time dateTime={e.at} title={new Date(e.at).toLocaleString()}>{e.approx ? '≈ ' : ''}{when(e.at)}</time>
+          </div>
+          <div className="tkp-ev-body"><EventText e={e} byId={byId} onOpen={onOpen} /></div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function EventText({ e, byId, onOpen }: { e: TicketEvent; byId: Map<string, Ticket>; onOpen: (id: string) => void }) {
+  switch (e.kind) {
+    case 'filed': return <span>Filed it</span>;
+    case 'status': return <span>{STATUS_LABEL[e.from] ?? e.from} → <b>{STATUS_LABEL[e.to] ?? e.to}</b></span>;
+    case 'reopened': return <><span>Reopened: {STATUS_LABEL[e.from] ?? e.from} → <b>{STATUS_LABEL[e.to] ?? e.to}</b></span><p className="tkp-ev-text">{e.reason}</p></>;
+    case 'reply': return e.text ? <><span>Replied</span><p className="tkp-ev-text">{e.text}</p></> : <span>Withdrew the reply</span>;
+    case 'note': return e.text ? <><span>Private note</span><p className="tkp-ev-text is-private">{e.text}</p></> : <span>Cleared the private note</span>;
+    case 'comment': return <><span>Added a follow-up</span><p className="tkp-ev-text">{e.text}</p></>;
+    case 'linked': return <span className="tkp-ev-link">Linked <LinkChip id={e.other} rel={e.rel} byId={byId} onOpen={onOpen} /></span>;
+    case 'unlinked': return <span className="tkp-ev-link">Unlinked <LinkChip id={e.other} byId={byId} onOpen={onOpen} /></span>;
+    case 'commit': return (
+      <span>Commit {e.hash
+        ? <a className="tkp-commit" href="/stats/history" target="_blank" rel="noreferrer" title="Open the site history and search for it"><code>{e.hash.slice(0, 7)}</code> ↗</a>
+        : 'recorded'}{e.message ? ` · ${e.message}` : ''}</span>
+    );
+    case 'seen_again': return <span>Seen again{e.build ? <> on <code>{e.build}</code></> : ''} ({e.count} so far)</span>;
+    default: return null;
+  }
 }

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { recentErrors } from './error-buffer';
+import { pastedImage } from '@/lib/tickets/paste';
+import type { ReporterEvent } from '@/lib/tickets/history';
 
 // The ticket sheet: file a bug / idea / question, see what was sent along with it,
 // and check the status of tickets you've filed before.
@@ -24,6 +26,13 @@ const MAX_IMAGE = 10 * 1024 * 1024;
 type Mine = {
   id: string; kind: string; severity?: string; message: string; status: string; createdAt: string;
   hasImage: boolean; page: string; reply?: { text: string; at: string }; comments?: { text: string; at: string }[];
+  /** Already stripped by the server: no private notes, no commit hashes, links only to your own tickets. */
+  history?: ReporterEvent[]; links?: { id: string; rel: string }[]; canReopen?: boolean;
+};
+const REL_LABEL: Record<string, string> = { related: 'Related to', duplicate_of: 'Same as', duplicated_by: 'Same as' };
+const firstLine = (text: string, max = 50) => {
+  const line = text.split('\n').find((l) => l.trim()) ?? text;
+  return line.length > max ? `${line.slice(0, max)}…` : line;
 };
 
 /** What the browser can tell us about itself and the page. The server adds who and which build. */
@@ -81,7 +90,9 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
   const [mineError, setMineError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
-  const [followUp, setFollowUp] = useState<{ id: string; text: string; busy: boolean; error: string } | null>(null);
+  // A follow-up on an open ticket, or (reopen) why a closed one isn't sorted after all.
+  const [followUp, setFollowUp] = useState<{ id: string; text: string; busy: boolean; error: string; reopen?: boolean } | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -113,7 +124,7 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
     if (!followUp || followUp.busy || !followUp.text.trim()) return;
     setFollowUp({ ...followUp, busy: true, error: '' });
     try {
-      const res = await fetch(`/api/tickets/${followUp.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment: followUp.text }) });
+      const res = await fetch(`/api/tickets/${followUp.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(followUp.reopen ? { reopen: followUp.text } : { comment: followUp.text }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message || 'Could not send that');
       setMine((list) => list?.map((t) => (t.id === followUp.id ? body.ticket : t)) ?? list);
@@ -135,6 +146,28 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
     }
   }
   useEffect(() => { if (tab === 'mine') void loadMine(); }, [tab]);
+
+  // Ctrl+V after a screen snip attaches it; a text paste still goes into the message.
+  useEffect(() => {
+    if (tab !== 'new' || sent) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const file = pastedImage(e.clipboardData?.files);
+      if (!file) return;
+      e.preventDefault();
+      pickImage(file);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [tab, sent]);
+
+  // A small preview, so a pasted snip can be checked before sending.
+  const [preview, setPreview] = useState('');
+  useEffect(() => {
+    if (!image) { setPreview(''); return; }
+    const url = URL.createObjectURL(image);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [image]);
 
   function pickImage(file: File | undefined) {
     setError('');
@@ -212,11 +245,14 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
               <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => pickImage(e.target.files?.[0])} />
               <button type="button" className="tk-btn tk-btn-quiet" onClick={() => fileRef.current?.click()}>📎 {image ? 'Change image' : 'Add a screenshot or photo'}</button>
               {image && (
-                <span className="tk-file">{image.name.slice(0, 30)}
+                <span className="tk-file">
+                  {preview && <img className="tk-file-thumb" src={preview} alt="" />}
+                  {image.name.slice(0, 30)}
                   <button type="button" aria-label="Remove image" onClick={() => { setImage(null); if (fileRef.current) fileRef.current.value = ''; }}>✕</button>
                 </span>
               )}
             </div>
+            {!image && <p className="tk-hint">Took a screen snip? Paste it here with Ctrl+V (⌘V on a Mac).</p>}
 
             <p className="tk-included">
               Included: this page, your device, the time, and recent errors.{' '}
@@ -242,35 +278,91 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
             {mineError && <p className="tk-error" role="alert">{mineError}</p>}
             {!mine && !mineError && <p className="tk-muted">Loading…</p>}
             {mine && mine.length === 0 && <p className="tk-muted">Nothing sent yet.</p>}
-            {mine?.map((t) => (
-              <article key={t.id} className="tk-ticket">
+            {mine?.map((t) => {
+              const isOpen = t.status === 'open' || t.status === 'in_progress';
+              const showHistory = expanded === t.id && (t.history?.length ?? 0) > 0;
+              return (
+              <article key={t.id} id={`tk-mine-${t.id}`} className="tk-ticket">
                 <div className="tk-ticket-top">
                   <span className={`tk-status is-${t.status}`}>{STATUS_LABEL[t.status] ?? t.status}</span>
                   <span className="tk-muted">{KINDS.find((k) => k.id === t.kind)?.label ?? t.kind} · {when(t.createdAt)}</span>
                 </div>
                 <p className="tk-msg">{t.message}</p>
                 {t.hasImage && <p className="tk-muted">📎 Image attached</p>}
-                {t.reply && <div className="tk-reply"><strong>Reply</strong><p>{t.reply.text}</p></div>}
-                {(t.comments ?? []).map((cm, i) => (
-                  <div key={i} className="tk-reply is-you"><strong>You added · {when(cm.at)}</strong><p>{cm.text}</p></div>
-                ))}
-                {(t.status === 'open' || t.status === 'in_progress') && (followUp?.id === t.id ? (
+                {(t.links?.length ?? 0) > 0 && (
+                  <div className="tk-links">
+                    {t.links!.map((l) => {
+                      const other = mine.find((x) => x.id === l.id);
+                      return other ? (
+                        <button key={l.id} type="button" className="tk-linkchip" onClick={() => { setExpanded(l.id); requestAnimationFrame(() => document.getElementById(`tk-mine-${l.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })); }}>
+                          <span>{REL_LABEL[l.rel] ?? 'Related to'}</span> {firstLine(other.message)}
+                        </button>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+                {showHistory ? (
+                  <MineTimeline events={t.history!} />
+                ) : (<>
+                  {t.reply && <div className="tk-reply"><strong>Reply</strong><p>{t.reply.text}</p></div>}
+                  {(t.comments ?? []).map((cm, i) => (
+                    <div key={i} className="tk-reply is-you"><strong>You added · {when(cm.at)}</strong><p>{cm.text}</p></div>
+                  ))}
+                </>)}
+                {followUp?.id === t.id ? (
                   <div className="tk-follow">
-                    <textarea className="tk-text" rows={3} maxLength={MAX_MESSAGE} autoFocus value={followUp.text} placeholder="Anything to add?" onChange={(e) => setFollowUp({ ...followUp, text: e.target.value })} />
+                    <textarea className="tk-text" rows={3} maxLength={followUp.reopen ? 500 : MAX_MESSAGE} autoFocus value={followUp.text} placeholder={followUp.reopen ? 'What’s still wrong?' : 'Anything to add?'} onChange={(e) => setFollowUp({ ...followUp, text: e.target.value })} />
                     {followUp.error && <p className="tk-error" role="alert">{followUp.error}</p>}
                     <div className="tk-row">
-                      <button type="button" className="tk-btn tk-btn-primary" disabled={followUp.busy || !followUp.text.trim()} onClick={() => void sendFollowUp()}>{followUp.busy ? 'Sending…' : 'Add'}</button>
+                      <button type="button" className="tk-btn tk-btn-primary" disabled={followUp.busy || !followUp.text.trim()} onClick={() => void sendFollowUp()}>{followUp.busy ? 'Sending…' : followUp.reopen ? 'Reopen' : 'Add'}</button>
                       <button type="button" className="tk-btn tk-btn-quiet" onClick={() => setFollowUp(null)}>Cancel</button>
                     </div>
                   </div>
                 ) : (
-                  <div><button type="button" className="tk-btn tk-btn-quiet" onClick={() => setFollowUp({ id: t.id, text: '', busy: false, error: '' })}>Add a follow-up</button></div>
-                ))}
+                  <div className="tk-row">
+                    {(t.history?.length ?? 0) > 1 && (
+                      <button type="button" className="tk-btn tk-btn-quiet" aria-expanded={showHistory} onClick={() => setExpanded(showHistory ? null : t.id)}>{showHistory ? 'Hide history' : `History (${t.history!.length})`}</button>
+                    )}
+                    {isOpen && <button type="button" className="tk-btn tk-btn-quiet" onClick={() => setFollowUp({ id: t.id, text: '', busy: false, error: '' })}>Add a follow-up</button>}
+                    {!isOpen && t.canReopen && <button type="button" className="tk-btn tk-btn-quiet" onClick={() => setFollowUp({ id: t.id, text: '', busy: false, error: '', reopen: true })}>Reopen</button>}
+                  </div>
+                )}
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+/** Your ticket's history, oldest first: what you sent, what happened, the replies. */
+function MineTimeline({ events }: { events: ReporterEvent[] }) {
+  const status = (s: string) => STATUS_LABEL[s] ?? s;
+  return (
+    <ol className="tk-tl">
+      {events.map((e, i) => {
+        const you = e.by === 'reporter';
+        let what: React.ReactNode = null;
+        let text: string | undefined;
+        switch (e.kind) {
+          case 'filed': what = 'You sent it'; break;
+          case 'status': what = <>{status(e.from)} → <b>{status(e.to)}</b></>; break;
+          case 'reopened': what = you ? 'You reopened it' : e.to === 'open' ? 'Reopened' : <>Reopened: <b>{status(e.to)}</b></>; text = e.reason; break;
+          case 'reply': what = 'Reply'; text = e.text; break;
+          case 'comment': what = 'You added'; text = e.text; break;
+          case 'linked': what = 'Linked to another of your tickets'; break;
+          case 'unlinked': what = 'Unlinked from another of your tickets'; break;
+          case 'commit': what = 'Fixed in a site update'; break;
+        }
+        return (
+          <li key={i} className={`tk-ev is-${e.kind}${you ? ' is-you' : ''}`}>
+            <span className="tk-ev-head"><strong>{what}</strong> <time dateTime={e.at}>{when(e.at)}</time></span>
+            {text && <p>{text}</p>}
+          </li>
+        );
+      })}
+    </ol>
   );
 }

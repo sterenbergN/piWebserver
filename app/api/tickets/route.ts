@@ -4,7 +4,7 @@ import { createLimiter } from '@/lib/security/rate-limit';
 import { ApiError, handleApiError } from '@/lib/workout/api';
 import { generateId } from '@/lib/workout/data';
 import { MAX_IMAGE_BYTES, currentBuild, deleteTicketImage, saveTicketImage, ticketsFile } from '@/lib/tickets/store';
-import { buildTicket, emptyTickets, enforceCap, normalizeTickets, toMine, TicketInputError, type TicketsData } from '@/lib/tickets/tickets';
+import { buildTicket, dropLinksTo, emptyTickets, enforceCap, normalizeTickets, toMineAmong, TicketInputError, type TicketsData } from '@/lib/tickets/tickets';
 import { requireReporter } from '@/lib/tickets/who';
 
 // Tickets for the signed-in account: file one (multipart: "data" JSON + optional "image"),
@@ -19,7 +19,10 @@ export async function GET() {
   try {
     const who = await requireReporter();
     const data = normalizeTickets(await readJson(ticketsFile(), emptyTickets()));
-    return NextResponse.json({ success: true, tickets: data.tickets.filter((t) => t.userId === who.userId).map(toMine) }, { headers: PRIVATE });
+    const own = data.tickets.filter((t) => t.userId === who.userId);
+    // Links show only between tickets this person filed; others' tickets stay out of sight.
+    const ownIds = new Set(own.map((t) => t.id));
+    return NextResponse.json({ success: true, tickets: own.map((t) => toMineAmong(t, ownIds)) }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Load tickets failed');
   }
@@ -70,6 +73,7 @@ export async function POST(request: Request) {
       const next = normalizeTickets(stored).tickets;
       next.unshift(ticket);
       const removed = enforceCap(next);
+      dropLinksTo(next, removed.map((t) => t.id));
       stored.tickets = next;
       return removed.map((t) => t.image).filter((v): v is string => !!v);
     });

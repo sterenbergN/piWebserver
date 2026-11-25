@@ -21,6 +21,7 @@ Work like a lead engineer: split big jobs, run the pieces in parallel, and check
 - **Every bug fix gets a test that fails without the fix.** Check it by putting the old code back briefly (`git stash push <file>`), running the test, then restoring it. The test suite is the site's memory of past mistakes.
 - **Find the cause, not the symptom**, and say in the commit how you checked it.
 - **Self-filed tickets.** The site files its own tickets (`lib/tickets/auto.ts`): browser errors, server errors (`handleApiError`, `onRequestError`), unreadable AI replies, failed jobs and installs that rolled back. They show in Admin › Tickets as "Filed by the site", with a count, the pages and builds they were seen on, and samples. Fix them like any bug and leave `reply` empty: there's no person behind them.
+- **Ticket timelines.** Every ticket keeps a history (`lib/tickets/history.ts`): status changes, replies, notes, links between tickets, commits. Reopening a closed ticket needs a reason. Record events through the existing helpers rather than editing `status` directly.
 - **Self-tuning features** adjust each person's own settings from results (`lib/tuning/`, `levelRule` in quick math, `aim` in chess, the study difficulty). Site-wide starting values change only through Admin › Tuning. Keep any new tuning within fixed limits, show the person why it moved, and give them a reset.
 
 ## Testing locally

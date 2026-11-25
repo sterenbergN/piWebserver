@@ -11,6 +11,7 @@ import NotesPanel from './NotesPanel';
 import type { BookSearchHit, Engine, ReaderSettings } from './source';
 import { bookFileUrl, downloadBook, flushNow, ReaderSignedOut, saveProgressHere } from './sync';
 import { useBookItems } from './useBookItems';
+import FeedbackLink from '@/components/tickets/FeedbackLink';
 
 // A book, full screen. The page sits under two canvases, one for saved pen marks and
 // one for the stroke being drawn, and under a clear layer that takes every touch. That
@@ -1003,6 +1004,7 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
                     <li><strong>Swipe left with two fingers, or in from the right edge</strong><span>Opens your notes. Swipe right on them to close.</span></li>
                     <li><strong>Swipe right with two fingers</strong><span>Opens the contents.</span></li>
                   </ul>
+                  <FeedbackLink className="rd-btn rd-feedback" />
                 </div>
               )}
             </div>

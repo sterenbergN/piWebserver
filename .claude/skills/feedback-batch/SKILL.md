@@ -38,8 +38,10 @@ Commit straight to `master` (the user pushes), one commit per coherent change. T
 Tell the user, in plain language: what each ticket was, what you changed and how you checked it, and what's not verified (for example, untested on the Pi or on an iPhone). Then end the message with one fenced JSON block, an update for every ticket in the batch:
 
 ```json
-[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: …" }]
+[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: …", "commit": "<short hash>", "related": ["<other ticket id>"] }]
 ```
 
 - `status`: `open`, `in_progress`, `done` (only for what's actually finished), or `wontfix` (say why).
 - `reply`: a short, friendly note to the person, with no internal details and no email addresses. Leave it empty (`""`) for tickets filed by the site.
+- `commit` (optional): the short hash of the commit that fixed or built it, so the ticket's timeline records it. Commit first, then write the report.
+- `related` (optional): ids of other tickets it ties to (same cause, follow-up, duplicate). Each ticket's block in the batch shows its links and recent timeline (reopen reasons, earlier replies): read them before triaging.

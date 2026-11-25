@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { enforceCap, type Ticket } from './tickets';
+import { recordEvent } from './history';
+import { dropLinksTo, enforceCap, type Ticket } from './tickets';
 
 // Tickets the site files about itself: errors in people's browsers, server errors,
 // AI replies that couldn't be read, failed background jobs, and installs that had to
@@ -111,7 +112,8 @@ export function applyAutoIssue(tickets: Ticket[], issue: AutoIssue, now: Date, n
   if (existing?.auto) {
     const auto = existing.auto;
     // Marked done, and here again on a build it wasn't seen on before: the fix didn't take.
-    const cameBack = existing.status === 'done' && !!issue.build && !auto.builds.includes(issue.build);
+    const newBuild = !!issue.build && !auto.builds.includes(issue.build);
+    const cameBack = existing.status === 'done' && newBuild;
     auto.count += times;
     auto.lastSeen = iso;
     auto.builds = pushUnique(auto.builds, issue.build);
@@ -119,11 +121,14 @@ export function applyAutoIssue(tickets: Ticket[], issue: AutoIssue, now: Date, n
     if (auto.samples.length < 3) auto.samples = pushUnique(auto.samples, sample);
     existing.updatedAt = iso;
     if (cameBack) {
+      recordEvent(existing, { by: 'site', kind: 'reopened', from: existing.status, to: 'open', reason: `Seen again on build ${issue.build}` }, now);
       existing.status = 'open';
       auto.reopened = (auto.reopened ?? 0) + 1;
       delete existing.seenAt;
       return 'reopened';
     }
+    // Once per build it turns up on, so the timeline shows where it travelled without a line per hit.
+    if (newBuild) recordEvent(existing, { by: 'site', kind: 'seen_again', build: issue.build, count: auto.count }, now);
     return 'counted';
   }
 
@@ -143,7 +148,8 @@ export function applyAutoIssue(tickets: Ticket[], issue: AutoIssue, now: Date, n
     updatedAt: iso,
     context: { path: page ?? '(none)', errors: issue.detail ? [issue.detail.slice(0, 300)] : [], build: issue.build, userAgent: issue.userAgent?.slice(0, 300) },
     auto: { source: issue.source, fingerprint, count: times, firstSeen: iso, lastSeen: iso, builds: issue.build ? [issue.build] : [], pages: page ? [page] : [], samples: [sample] },
+    history: [{ at: iso, by: 'site', kind: 'filed' }],
   });
-  enforceCap(tickets);
+  dropLinksTo(tickets, enforceCap(tickets).map((t) => t.id));
   return 'added';
 }

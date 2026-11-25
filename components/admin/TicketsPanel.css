@@ -1,5 +1,7 @@
 /* Last items clear the phone dock (--dock-h includes the safe area); the action bar sticks above it. */
 .tkp { display: grid; gap: 1rem; padding-bottom: calc(var(--dock-h, 0px) + 1rem); }
+/* Grid items default to their content's width; the sideways-scrolling filter rows would otherwise widen the page on a phone. */
+.tkp > *, .tkp-detail > * { min-width: 0; }
 .tkp-accounts { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; }
 
 .tkp-btn, .tkp-chip { font: inherit; font-size: 0.9rem; font-weight: 600; padding: 0.45rem 0.9rem; min-height: 44px; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--card-bg); color: var(--foreground); cursor: pointer; }
@@ -18,6 +20,8 @@
 .tkp-list { display: flex; flex-direction: column; gap: 0.5rem; }
 .tkp-card { border: 1px solid var(--surface-border); background: var(--card-bg); border-radius: 12px; overflow: hidden; }
 .tkp-card.is-open { border-color: var(--accent-light); }
+/* Opening a linked ticket scrolls to it; clear the sticky header and tab row. */
+.tkp-card { scroll-margin-top: 8rem; }
 .tkp-card-top { display: flex; align-items: stretch; }
 .tkp-pick { flex: none; display: flex; align-items: center; justify-content: center; width: 44px; cursor: pointer; }
 .tkp-pick input { width: 20px; height: 20px; }
@@ -62,3 +66,41 @@
 /* Tickets the site filed itself */
 .tkp-auto { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.6rem 0.75rem; border-radius: 10px; border: 1px dashed var(--surface-border); }
 .tkp-sample { margin: 0; padding: 0.45rem 0.6rem; border-radius: 8px; background: var(--card-bg); font-size: 0.78rem; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
+
+/* Timeline: oldest at the top, newest last, a dot per event on a thin rail. */
+.tkp-id { font-size: 0.75rem; }
+.tkp-tl { list-style: none; margin: 0; padding: 0 0 0 0.9rem; border-left: 2px solid var(--surface-border); display: grid; gap: 0.7rem; }
+.tkp-ev { position: relative; display: grid; gap: 0.15rem; font-size: 0.88rem; min-width: 0; }
+.tkp-ev::before { content: ''; position: absolute; left: calc(-0.9rem - 6px); top: 0.35rem; width: 10px; height: 10px; border-radius: 50%; background: var(--surface-border); }
+.tkp-ev.by-reporter::before { background: var(--accent-light); }
+.tkp-ev.by-claude::before { background: var(--info); }
+.tkp-ev.by-site::before { background: var(--warning); }
+.tkp-ev.is-reopened::before { background: var(--danger); }
+.tkp-ev.is-commit::before { background: var(--success); }
+.tkp-ev-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 0.6rem; font-size: 0.75rem; color: var(--muted); }
+.tkp-ev-who { font-weight: 700; color: var(--foreground); }
+.tkp-ev-body { overflow-wrap: anywhere; }
+.tkp-ev-text { margin: 0.2rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 0.6rem; border-left: 3px solid var(--accent-light); }
+.tkp-ev-text.is-private { border-left-color: var(--muted); color: var(--muted); }
+.tkp-ev-link { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.tkp-commit { color: var(--accent-light); text-decoration: none; }
+.tkp-commit:hover { text-decoration: underline; }
+
+/* Linked tickets: chips that open the other ticket. */
+.tkp-links { display: grid; gap: 0.5rem; }
+.tkp-link-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.tkp-link { display: inline-flex; align-items: stretch; max-width: 100%; border: 1px solid var(--surface-border); border-radius: 12px; background: var(--card-bg); overflow: hidden; }
+.tkp-link.is-gone { opacity: 0.6; }
+.tkp-link-open { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; min-width: 0; min-height: 36px; padding: 0.25rem 0.7rem; font: inherit; font-size: 0.8rem; color: var(--foreground); background: none; border: 0; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.tkp-link-open:disabled { cursor: default; }
+.tkp-link-rel { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.tkp-link-x { flex: none; width: 36px; font: inherit; color: var(--muted); background: none; border: 0; border-left: 1px solid var(--surface-border); cursor: pointer; }
+.tkp-link-add { display: grid; gap: 0.5rem; padding: 0.6rem; border-radius: 10px; border: 1px dashed var(--surface-border); }
+.tkp-link-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; max-height: 300px; overflow: auto; }
+.tkp-link-results button { width: 100%; display: grid; gap: 0.2rem; text-align: left; font: inherit; font-size: 0.88rem; color: var(--foreground); background: var(--card-bg); border: 1px solid var(--surface-border); border-radius: 10px; padding: 0.5rem 0.7rem; min-height: 44px; cursor: pointer; overflow-wrap: anywhere; }
+.tkp-link-results button:hover { border-color: var(--accent-light); }
+.tkp-input { box-sizing: border-box; max-width: 100%; font: inherit; font-size: 16px; min-height: 44px; padding: 0.45rem 0.6rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); }
+.tkp-commit-in { flex: 1 1 9rem; min-width: 0; font-family: ui-monospace, monospace; }
+
+.tkp-chip.is-pending { border-color: var(--accent-light); }
+.tkp-reopen { display: grid; gap: 0.5rem; padding: 0.6rem; border-radius: 10px; border: 1px solid var(--accent-light); }

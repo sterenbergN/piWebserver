@@ -52,3 +52,19 @@
 
 .tk-reply.is-you { border-left-color: var(--muted); }
 .tk-follow { display: grid; gap: 0.5rem; }
+.tk-file-thumb { width: 2.4rem; height: 2.4rem; object-fit: cover; border-radius: 6px; border: 1px solid var(--surface-border); }
+.tk-hint { margin: 0; font-size: 0.8rem; color: var(--muted); }
+/* "Send feedback" inside Reader's and Notes' own settings. */
+.rd-feedback, .nt-feedback { margin-top: 0.9rem; width: 100%; justify-content: center; }
+/* My tickets: links to your other tickets, and each ticket's history. */
+.tk-links { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tk-linkchip { font: inherit; font-size: 0.8rem; color: var(--foreground); background: none; border: 1px solid var(--surface-border); border-radius: 999px; padding: 0.3rem 0.7rem; min-height: 36px; max-width: 100%; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.tk-linkchip span { color: var(--muted); font-weight: 700; }
+.tk-tl { list-style: none; margin: 0; padding: 0 0 0 0.85rem; border-left: 2px solid var(--surface-border); display: grid; gap: 0.6rem; }
+.tk-ev { position: relative; font-size: 0.85rem; min-width: 0; }
+.tk-ev::before { content: ''; position: absolute; left: calc(-0.85rem - 6px); top: 0.3rem; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-light); }
+.tk-ev.is-you::before { background: var(--muted); }
+.tk-ev.is-commit::before { background: var(--success); }
+.tk-ev-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 0.5rem; }
+.tk-ev-head time { color: var(--muted); font-size: 0.75rem; }
+.tk-ev p { margin: 0.2rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }

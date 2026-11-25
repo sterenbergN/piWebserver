@@ -3,6 +3,7 @@
 // sessions live in store.ts and the routes.
 
 import type { AutoInfo } from './auto';
+import { cleanCommit, closedAt, historyOf, inverseRelation, isClosed, LINK_RELATIONS, MAX_LINKS, recordEvent, reporterHistory, type LinkRelation, type TicketActor, type TicketEvent, type TicketLink } from './history';
 
 export const KINDS = ['bug', 'idea', 'question', 'other'] as const;
 export const SEVERITIES = ['minor', 'annoying', 'blocking'] as const;
@@ -16,6 +17,12 @@ export const MAX_REPLY = 4000;
 export const MAX_TICKETS = 1000;
 export const MAX_ERRORS = 10;
 export const MAX_COMMENTS = 20;
+/** Why a closed ticket was opened again. */
+export const MAX_REASON = 500;
+/** How long after closing the reporter can still reopen it. */
+export const REOPEN_DAYS = 60;
+/** Times a reporter may reopen one ticket. */
+export const MAX_REPORTER_REOPENS = 5;
 
 /** What the browser reports about itself. Everything here is client-supplied, so it's only trusted as text. */
 export type TicketContext = {
@@ -62,6 +69,10 @@ export type Ticket = {
   seenAt?: string;
   /** Filed by the site itself (lib/tickets/auto.ts): how often, where and on which builds. */
   auto?: AutoInfo;
+  /** What happened, oldest first (lib/tickets/history.ts). Absent on tickets stored before timelines. */
+  history?: TicketEvent[];
+  /** Other tickets this one is tied to; both sides hold the link. */
+  links?: TicketLink[];
 };
 
 export type TicketsData = { tickets: Ticket[] };
@@ -126,7 +137,7 @@ export function buildTicket(input: NewTicketInput, who: { userId: string; userna
   const iso = extra.now.toISOString();
   const context = cleanContext(input.context);
   if (extra.build) context.build = extra.build;
-  const ticket: Ticket = { id: extra.id, userId: who.userId, username: who.username, kind, message, status: 'open', createdAt: iso, updatedAt: iso, context };
+  const ticket: Ticket = { id: extra.id, userId: who.userId, username: who.username, kind, message, status: 'open', createdAt: iso, updatedAt: iso, context, history: [{ at: iso, by: 'reporter', kind: 'filed' }] };
   const severity = kind === 'bug' ? oneOf(SEVERITIES, input.severity) : undefined;
   if (severity) ticket.severity = severity;
   if (extra.image) ticket.image = extra.image;
@@ -147,23 +158,45 @@ export function enforceCap(tickets: Ticket[], max = MAX_TICKETS): Ticket[] {
   return removed;
 }
 
-export type TicketPatch = { status?: unknown; reply?: unknown; note?: unknown; seen?: unknown };
+export type TicketPatch = { status?: unknown; reply?: unknown; note?: unknown; seen?: unknown; reason?: unknown };
+type Editor = Extract<TicketActor, 'admin' | 'claude'>;
 
-/** Apply an admin edit in place. An empty reply or note clears it. */
-export function applyPatch(ticket: Ticket, patch: TicketPatch, now: Date) {
+/** Change the status, noting it in the timeline. Opening a closed ticket again needs a reason. */
+function changeStatus(ticket: Ticket, to: TicketStatus, reason: unknown, by: TicketActor, now: Date) {
+  const from = ticket.status;
+  if (from === to) return;
+  if (isClosed(from) && !isClosed(to)) {
+    const why = cleanText(reason, MAX_REASON);
+    if (!why) throw new TicketInputError('Say why it’s being reopened');
+    recordEvent(ticket, { by, kind: 'reopened', from, to, reason: why }, now);
+  } else {
+    recordEvent(ticket, { by, kind: 'status', from, to }, now);
+  }
+  ticket.status = to;
+}
+
+/** Apply an admin edit (or one from Claude's report) in place. An empty reply or note clears it. */
+export function applyPatch(ticket: Ticket, patch: TicketPatch, now: Date, by: Editor = 'admin') {
   const iso = now.toISOString();
   if (patch.status !== undefined) {
     const status = oneOf(STATUSES, patch.status);
     if (!status) throw new TicketInputError('Unknown status');
-    ticket.status = status;
+    changeStatus(ticket, status, patch.reason, by, now);
   }
   if (patch.reply !== undefined) {
     const text = cleanText(patch.reply, MAX_REPLY);
-    if (!text) delete ticket.reply;
-    else if (ticket.reply?.text !== text) ticket.reply = { text, at: iso };
+    if (!text) {
+      // Withdrawn: the reporter's view hides the earlier reply events too.
+      if (ticket.reply) recordEvent(ticket, { by, kind: 'reply', text: '' }, now);
+      delete ticket.reply;
+    } else if (ticket.reply?.text !== text) {
+      ticket.reply = { text, at: iso };
+      recordEvent(ticket, { by, kind: 'reply', text }, now);
+    }
   }
   if (patch.note !== undefined) {
     const note = cleanText(patch.note, MAX_REPLY);
+    if (note !== (ticket.note ?? '')) recordEvent(ticket, { by, kind: 'note', text: note }, now);
     if (note) ticket.note = note; else delete ticket.note;
   }
   // Any admin action means they've looked at it.
@@ -173,21 +206,132 @@ export function applyPatch(ticket: Ticket, patch: TicketPatch, now: Date) {
 
 /** A follow-up from the reporter. Only while the ticket is still being worked on. */
 export function addComment(ticket: Ticket, text: unknown, now: Date) {
-  if (ticket.status === 'done' || ticket.status === 'wontfix') throw new TicketInputError('This one is closed. File a new ticket instead');
+  if (isClosed(ticket.status)) throw new TicketInputError('This one is closed. Reopen it, or file a new ticket');
   const clean = cleanText(text, MAX_MESSAGE);
   if (!clean) throw new TicketInputError('Write a few words first');
   const comments = ticket.comments ?? [];
   if (comments.length >= MAX_COMMENTS) throw new TicketInputError('That’s a lot of follow-ups. File a new ticket instead');
   ticket.comments = [...comments, { text: clean, at: now.toISOString() }];
+  recordEvent(ticket, { by: 'reporter', kind: 'comment', text: clean }, now);
   ticket.updatedAt = now.toISOString();
   // New words from the reporter should light the dot again.
   delete ticket.seenAt;
 }
 
-/** What the person who filed it may see: no internal note and no technical details beyond the page. */
-export function toMine(t: Ticket) {
-  return { id: t.id, kind: t.kind, severity: t.severity, message: t.message, status: t.status, createdAt: t.createdAt, updatedAt: t.updatedAt, hasImage: !!t.image, page: t.context.path, reply: t.reply, comments: t.comments ?? [] };
+/** Whether the reporter can still reopen it: closed, within REOPEN_DAYS, and not reopened too often. */
+export function canReporterReopen(ticket: Ticket, now: Date): boolean {
+  const closed = closedAt(ticket);
+  if (!closed) return false;
+  if (now.getTime() - Date.parse(closed) > REOPEN_DAYS * 86_400_000) return false;
+  return historyOf(ticket).filter((e) => e.kind === 'reopened' && e.by === 'reporter').length < MAX_REPORTER_REOPENS;
 }
+
+/** The reporter says a closed ticket isn't sorted after all. Needs a reason. */
+export function reopenByReporter(ticket: Ticket, reason: unknown, now: Date) {
+  if (!isClosed(ticket.status)) throw new TicketInputError('This one is still open');
+  const why = cleanText(reason, MAX_REASON);
+  if (!why) throw new TicketInputError('Say what’s still wrong');
+  if (!canReporterReopen(ticket, now)) throw new TicketInputError('This one was closed a while ago. File a new ticket instead');
+  changeStatus(ticket, 'open', why, 'reporter', now);
+  ticket.updatedAt = now.toISOString();
+  delete ticket.seenAt;
+}
+
+/** Record the commit that fixed (or worked on) it. Returns false if that commit is already there. */
+export function addCommit(ticket: Ticket, hash: unknown, message: unknown, by: TicketActor, now: Date): boolean {
+  const clean = cleanCommit(hash);
+  if (!clean) throw new TicketInputError('A commit is 7 to 40 hex characters');
+  if (historyOf(ticket).some((e) => e.kind === 'commit' && !!e.hash && (e.hash.startsWith(clean) || clean.startsWith(e.hash)))) return false;
+  const text = cleanText(message, 200);
+  recordEvent(ticket, { by, kind: 'commit', hash: clean, ...(text ? { message: text } : {}) }, now);
+  ticket.updatedAt = now.toISOString();
+  return true;
+}
+
+/**
+ * Link two tickets, both sides. `rel` is from the first ticket's side ("a is a duplicate
+ * of b" gives b "duplicated by a"). Linking again with another relation replaces it.
+ * Returns the tickets that changed (none if it was already so).
+ */
+export function linkTickets(list: Ticket[], fromId: unknown, toId: unknown, rel: unknown, by: TicketActor, now: Date): Ticket[] {
+  const relation = oneOf(LINK_RELATIONS, rel);
+  if (!relation) throw new TicketInputError('Unknown kind of link');
+  if (typeof fromId !== 'string' || typeof toId !== 'string' || !ID.test(fromId) || !ID.test(toId)) throw new TicketInputError('That isn’t a ticket id');
+  if (fromId === toId) throw new TicketInputError('A ticket can’t be linked to itself');
+  const a = list.find((t) => t.id === fromId);
+  const b = list.find((t) => t.id === toId);
+  if (!a || !b) throw new TicketInputError('No ticket with that id');
+  const back = inverseRelation(relation);
+  if (a.links?.some((l) => l.id === b.id && l.rel === relation) && b.links?.some((l) => l.id === a.id && l.rel === back)) return [];
+  for (const t of [a, b]) {
+    const other = t === a ? b : a;
+    if ((t.links ?? []).filter((l) => l.id !== other.id).length >= MAX_LINKS) throw new TicketInputError('That ticket has too many links already');
+  }
+  const iso = now.toISOString();
+  const attach = (t: Ticket, other: Ticket, r: LinkRelation) => {
+    t.links = [...(t.links ?? []).filter((l) => l.id !== other.id), { id: other.id, rel: r, at: iso }];
+    recordEvent(t, { by, kind: 'linked', other: other.id, rel: r }, now);
+    t.updatedAt = iso;
+  };
+  attach(a, b, relation);
+  attach(b, a, back);
+  return [a, b];
+}
+
+/** Undo a link, both sides (the other side may be gone already). Returns the tickets that changed. */
+export function unlinkTickets(list: Ticket[], fromId: unknown, toId: unknown, by: TicketActor, now: Date): Ticket[] {
+  const a = typeof fromId === 'string' ? list.find((t) => t.id === fromId) : undefined;
+  const link = typeof toId === 'string' ? a?.links?.find((l) => l.id === toId) : undefined;
+  if (!a || !link) throw new TicketInputError('Those tickets aren’t linked');
+  const iso = now.toISOString();
+  const changed: Ticket[] = [];
+  const detach = (t: Ticket, otherId: string) => {
+    const had = t.links?.find((l) => l.id === otherId);
+    if (!had) return;
+    const rest = (t.links ?? []).filter((l) => l.id !== otherId);
+    if (rest.length) t.links = rest; else delete t.links;
+    recordEvent(t, { by, kind: 'unlinked', other: otherId, rel: had.rel }, now);
+    t.updatedAt = iso;
+    changed.push(t);
+  };
+  detach(a, link.id);
+  const b = list.find((t) => t.id === link.id);
+  if (b) detach(b, a.id);
+  return changed;
+}
+
+/** Drop links that point at tickets no longer in the list (after a delete or the cap). */
+export function dropLinksTo(list: Ticket[], goneIds: Iterable<string>) {
+  const gone = new Set(goneIds);
+  if (!gone.size) return;
+  for (const t of list) {
+    if (!t.links?.some((l) => gone.has(l.id))) continue;
+    const rest = t.links.filter((l) => !gone.has(l.id));
+    if (rest.length) t.links = rest; else delete t.links;
+  }
+}
+
+/**
+ * What the person who filed it may see: no internal note, no technical details beyond
+ * the page, a timeline without notes or commit hashes, and links only to other tickets
+ * they filed themselves (`ownIds`).
+ */
+export function toMineAmong(t: Ticket, ownIds: ReadonlySet<string>, now = new Date()) {
+  return {
+    id: t.id, kind: t.kind, severity: t.severity, message: t.message, status: t.status, createdAt: t.createdAt, updatedAt: t.updatedAt,
+    hasImage: !!t.image, page: t.context.path, reply: t.reply, comments: t.comments ?? [],
+    history: reporterHistory(t, ownIds),
+    links: (t.links ?? []).filter((l) => ownIds.has(l.id) && l.id !== t.id).map((l) => ({ id: l.id, rel: l.rel })),
+    canReopen: canReporterReopen(t, now),
+  };
+}
+
+/** The reporter's view without any links (when the rest of their tickets aren't at hand). */
+export function toMine(t: Ticket) {
+  return toMineAmong(t, new Set());
+}
+
+export type MineTicket = ReturnType<typeof toMineAmong>;
 
 /** Whatever was stored, as tickets with the fields the app relies on, newest first. */
 export function normalizeTickets(value: unknown): TicketsData {
@@ -203,3 +347,45 @@ export function normalizeSettings(value: unknown): TicketSettings {
 }
 
 export const isNew = (t: Ticket) => !t.seenAt;
+
+export type BulkUpdate = { id: string; status?: unknown; reply?: unknown; reason?: unknown; commit?: unknown; related?: unknown };
+
+/**
+ * Several updates at once: "mark in progress" after copying, or Claude's pasted report
+ * (`by` "claude": its commit is recorded and its related tickets linked both ways).
+ * Throws on a bad status, a bad commit or a reopen without a reason, so the caller
+ * can reject the lot. Changes the tickets in place.
+ */
+export function applyBulk(list: Ticket[], updates: BulkUpdate[], by: 'admin' | 'claude', now: Date) {
+  const changed = new Map<string, Ticket>();
+  const missing: string[] = [];
+  const skippedLinks: string[] = [];
+  for (const u of updates) {
+    const found = list.find((t) => t.id === u.id);
+    if (!found) { missing.push(u.id); continue; }
+    // Only pass what was given: an absent reply must not clear an existing one.
+    const patch: TicketPatch = {};
+    const reply = typeof u.reply === 'string' && u.reply.trim() ? u.reply : undefined;
+    if (u.status !== undefined) {
+      patch.status = u.status;
+      // A report that reopens a closed ticket gives its reason in the reply.
+      const reopening = isClosed(found.status) && !isClosed(u.status as TicketStatus);
+      patch.reason = u.reason ?? (reopening && by === 'claude' ? reply ?? 'Reopened in Claude’s report' : undefined);
+    }
+    if (reply) patch.reply = reply;
+    applyPatch(found, patch, now, by);
+    if (u.commit !== undefined) addCommit(found, u.commit, undefined, by, now);
+    changed.set(found.id, found);
+    for (const other of Array.isArray(u.related) ? u.related : []) {
+      // Already linked (say, marked a duplicate by hand): a report doesn't turn it into "related".
+      if (found.links?.some((l) => l.id === other)) continue;
+      try {
+        for (const t of linkTickets(list, found.id, other, 'related', by, now)) changed.set(t.id, t);
+      } catch (error) {
+        if (!(error instanceof TicketInputError)) throw error;
+        skippedLinks.push(`${found.id} → ${String(other).slice(0, 64)}: ${error.message}`);
+      }
+    }
+  }
+  return { changed: [...changed.values()], missing, skippedLinks };
+}

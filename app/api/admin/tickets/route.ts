@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { readJson, updateJson } from '@/lib/json-store';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { withHistory } from '@/lib/tickets/history';
 import { forgetEnabledCache, settingsFile, ticketsFile } from '@/lib/tickets/store';
 import { emptySettings, emptyTickets, isNew, normalizeSettings, normalizeTickets, type TicketSettings } from '@/lib/tickets/tickets';
 import { loadUsersData } from '@/lib/workout/users';
@@ -21,7 +22,8 @@ export async function GET(request: Request) {
   const users = await loadUsersData().catch(() => ({ users: [] as Record<string, any>[], deletedUserIds: [] as string[] }));
   const deleted = new Set(users.deletedUserIds ?? []);
   const accounts = users.users.filter((u) => !deleted.has(u.id)).map((u) => ({ id: String(u.id), username: String(u.username ?? u.id) }));
-  return NextResponse.json({ tickets, newCount, accounts, enabledUserIds: settings.enabledUserIds });
+  // Timelines are filled in here (built from the old fields for older tickets) without writing the file.
+  return NextResponse.json({ tickets: tickets.map(withHistory), newCount, accounts, enabledUserIds: settings.enabledUserIds });
 }
 
 export async function PUT(request: Request) {

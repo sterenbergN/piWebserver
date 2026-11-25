@@ -1,3 +1,4 @@
+import { cleanCommit, historyOf, type LinkRelation, type TicketEvent } from './history';
 import { KINDS, STATUSES, type Ticket, type TicketKind, type TicketStatus } from './tickets';
 
 // Copy for Claude: turn tickets into one Markdown prompt for Claude Code working in this repo,
@@ -19,6 +20,35 @@ const indent = (text: string, pad = '  ') => text.split('\n').map((l) => pad + l
 const quote = (text: string) => text.split('\n').map((l) => `> ${l}`).join('\n');
 
 const AUTO_SOURCE: Record<string, string> = { browser: 'an error in someone’s browser', server: 'a server error', ai: 'an AI problem', job: 'a background job that failed', deploy: 'an install that had to roll back' };
+
+const REL_LABEL: Record<LinkRelation, string> = { related: 'related to', duplicate_of: 'duplicate of', duplicated_by: 'duplicated by' };
+const WHO: Record<string, string> = { reporter: 'reporter', admin: 'admin', site: 'site', claude: 'Claude' };
+/** Timeline lines worth showing Claude: what the rest of the block doesn't already say. */
+const TIMELINE_KEEP = 8;
+
+function timelineLines(t: Ticket): string[] {
+  const shown = (e: TicketEvent) => {
+    if (e.kind === 'filed' || e.kind === 'comment' || e.kind === 'note') return false; // already in the block
+    if (e.kind === 'reply') return !!e.text && e.text !== t.reply?.text; // earlier replies only
+    return true;
+  };
+  const events = historyOf(t).filter(shown).slice(-TIMELINE_KEEP);
+  const out: string[] = [];
+  for (const e of events) {
+    const head = `  - ${day(e.at)} · ${WHO[e.by] ?? e.by}`;
+    switch (e.kind) {
+      case 'status': out.push(`${head}: ${STATUS_LABEL[e.from] ?? e.from} → ${STATUS_LABEL[e.to] ?? e.to}`); break;
+      case 'reopened': out.push(`${head}: reopened (${STATUS_LABEL[e.from] ?? e.from} → ${STATUS_LABEL[e.to] ?? e.to}), because:`, indent(quote(e.reason), '    ')); break;
+      case 'reply': out.push(`${head}: earlier reply:`, indent(quote(e.text), '    ')); break;
+      case 'linked': out.push(`${head}: linked as ${REL_LABEL[e.rel] ?? e.rel} ${e.other}`); break;
+      case 'unlinked': out.push(`${head}: unlinked ${e.other}`); break;
+      case 'commit': out.push(`${head}: commit ${e.hash ?? '(unknown)'}${e.message ? ` (${e.message.replace(/\s+/g, ' ')})` : ''}`); break;
+      case 'seen_again': out.push(`${head}: seen again${e.build ? ` on build ${e.build}` : ''} (${e.count} so far)`); break;
+      default: break;
+    }
+  }
+  return out;
+}
 
 export function ticketBlock(t: Ticket): string {
   const c = t.context;
@@ -67,6 +97,12 @@ export function ticketBlock(t: Ticket): string {
     lines.push('- Admin’s private note:');
     lines.push(indent(quote(t.note)));
   }
+  if (t.links?.length) lines.push(`- Linked tickets: ${t.links.map((l) => `${REL_LABEL[l.rel] ?? l.rel} ${l.id}`).join(', ')}`);
+  const timeline = timelineLines(t);
+  if (timeline.length) {
+    lines.push('- Timeline (latest last):');
+    lines.push(...timeline);
+  }
   return lines.join('\n');
 }
 
@@ -101,14 +137,16 @@ export function buildPrompt(tickets: Ticket[], now = new Date()): string {
   out.push('End your last message with one fenced JSON block listing an update for every ticket above. `reply` is a short, friendly note to the person who filed it (no internal details, no email addresses):');
   out.push('');
   out.push('```json');
-  out.push('[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: the button now …" }]');
+  out.push('[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: the button now …", "commit": "<short hash>", "related": ["<other ticket id>"] }]');
   out.push('```');
   out.push('');
   out.push(`\`status\` is one of ${STATUSES.map((s) => `"${s}"`).join(', ')}. Use "done" only for what you actually finished, "in_progress" for work that continues, "wontfix" with a reason, and "open" for anything waiting on more information.`);
+  out.push('`commit` (optional) is the short hash of the commit that fixed it, once you have committed. `related` (optional) lists ids of other tickets here that are about the same thing; they get linked both ways. If you reopen a ticket that was done or won’t fix, say why in `reply`.');
   return out.join('\n');
 }
 
-export type ReportUpdate = { id: string; status?: TicketStatus; reply?: string };
+export type ReportUpdate = { id: string; status?: TicketStatus; reply?: string; commit?: string; related?: string[] };
+const TICKET_ID = /^[\w-]{1,64}$/;
 
 /** Remove commas that sit right before a closing bracket, leaving string contents alone. */
 function dropTrailingCommas(src: string): string {
@@ -169,10 +207,14 @@ export function parseReport(text: string): ParsedReport | null {
       const status = typeof o.status === 'string' ? (o.status.trim().toLowerCase().replace(/[\s-]+/g, '_') as TicketStatus) : undefined;
       if (status !== undefined && !STATUSES.includes(status)) { skipped.push(`${id}: unknown status “${String(o.status)}”`); continue; }
       const reply = typeof o.reply === 'string' && o.reply.trim() ? o.reply.trim() : undefined;
-      if (!status && !reply) { skipped.push(`${id}: nothing to change`); continue; }
+      const commit = cleanCommit(o.commit);
+      if (o.commit !== undefined && o.commit !== null && o.commit !== '' && !commit) skipped.push(`${id}: “${String(o.commit).slice(0, 50)}” isn’t a commit hash (left out)`);
+      const rawRelated = Array.isArray(o.related) ? o.related : typeof o.related === 'string' ? [o.related] : [];
+      const related = [...new Set(rawRelated.filter((r): r is string => typeof r === 'string').map((r) => r.trim()).filter((r) => TICKET_ID.test(r) && r !== id))].slice(0, 20);
+      if (!status && !reply && !commit && !related.length) { skipped.push(`${id}: nothing to change`); continue; }
       if (seen.has(id)) { skipped.push(`${id}: listed twice, kept the first`); continue; }
       seen.add(id);
-      updates.push({ id, ...(status ? { status } : {}), ...(reply ? { reply } : {}) });
+      updates.push({ id, ...(status ? { status } : {}), ...(reply ? { reply } : {}), ...(commit ? { commit } : {}), ...(related.length ? { related } : {}) });
     }
     if (updates.length || skipped.length) return { updates, skipped };
   }

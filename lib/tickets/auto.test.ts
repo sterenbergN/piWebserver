@@ -56,6 +56,17 @@ test('a done ticket reopens only when the problem shows up on a newer build', ()
   assert.equal(tickets[0].status, 'open');
   assert.equal(tickets[0].seenAt, undefined);
   assert.equal(tickets[0].auto!.reopened, 1);
+  // The timeline says the site reopened it, and why.
+  const reopened = tickets[0].history!.at(-1)!;
+  assert.ok(reopened.kind === 'reopened' && reopened.by === 'site' && reopened.from === 'done' && reopened.reason === 'Seen again on build build-2 def');
+  assert.equal(tickets[0].history![0].kind, 'filed');
+  assert.equal(tickets[0].history![0].by, 'site');
+  // While open, a new build adds one "seen again" line; more hits on that build add none.
+  applyAutoIssue(tickets, { ...hydration, build: 'build-2b' }, at('2026-11-25T10:00:00Z'), newId);
+  applyAutoIssue(tickets, { ...hydration, build: 'build-2b' }, at('2026-11-25T11:00:00Z'), newId);
+  const seen = tickets[0].history!.filter((e) => e.kind === 'seen_again');
+  assert.equal(seen.length, 1);
+  assert.ok(seen[0].kind === 'seen_again' && seen[0].build === 'build-2b' && seen[0].count === 4);
   // Won't fix stays won't fix, but keeps counting.
   tickets[0].status = 'wontfix';
   assert.equal(applyAutoIssue(tickets, { ...hydration, build: 'build-3 ghi' }, at('2026-11-26T09:00:00Z'), newId), 'counted');
