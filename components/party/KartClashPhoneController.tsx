@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { DRIFT_TIER_COLORS, ITEM_META, KartItemType, RANK_COLORS, ROULETTE_EMOJIS, formatRaceTime, ordinal } from '@/lib/party/kart-shared';
+import { DRIFT_TIER_COLORS, DRIFT_TIER_LABELS, ITEM_META, KartItemType, MAX_COINS, RANK_COLORS, ROULETTE_EMOJIS, formatRaceTime, ordinal } from '@/lib/party/kart-shared';
 import { REACTIONS } from '@/lib/party/avatars';
 import type { KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 import type { TrackId } from '@/lib/party/kart-tracks';
@@ -166,6 +166,9 @@ export default function KartClashPhoneController({
   const fullLockRef = useRef(TILT_SENSITIVITY[1].fullLockDeg);
   const cockpitGaugeRef = useRef<HTMLDivElement | null>(null);
   const steerBarRef = useRef<HTMLDivElement | null>(null);
+  const steerFillRef = useRef<HTMLDivElement | null>(null);
+  const steerLeftArrowRef = useRef<HTMLSpanElement | null>(null);
+  const steerRightArrowRef = useRef<HTMLSpanElement | null>(null);
   const gaugeRef = useRef<HTMLDivElement | null>(null);
   const padRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -455,6 +458,26 @@ export default function KartClashPhoneController({
       const steer = padSteerRef.current ?? (keySteerRef.current !== 0 ? keySteerRef.current : tiltSteerRef.current);
       if (cockpitGaugeRef.current) cockpitGaugeRef.current.style.left = `calc(${50 + steer * 46}% - 9px)`;
       if (steerBarRef.current) steerBarRef.current.style.left = `calc(${50 + steer * 46}% - 12px)`;
+      if (steerFillRef.current) {
+        const absPct = Math.min(46, Math.abs(steer) * 46);
+        steerFillRef.current.style.left = steer >= 0 ? '50%' : `${50 - absPct}%`;
+        steerFillRef.current.style.width = `${absPct}%`;
+        steerFillRef.current.style.opacity = Math.abs(steer) > 0.03 ? '1' : '0';
+      }
+      if (steerLeftArrowRef.current) {
+        const leftAmt = Math.max(0, -steer);
+        steerLeftArrowRef.current.style.opacity = String(0.35 + leftAmt * 0.65);
+        steerLeftArrowRef.current.style.color = leftAmt > 0.15 ? '#38bdf8' : 'rgba(255,255,255,0.65)';
+        steerLeftArrowRef.current.style.textShadow = leftAmt > 0.15 ? `0 0 ${Math.round(leftAmt * 14)}px #38bdf8` : 'none';
+        steerLeftArrowRef.current.style.transform = `scale(${1 + leftAmt * 0.2})`;
+      }
+      if (steerRightArrowRef.current) {
+        const rightAmt = Math.max(0, steer);
+        steerRightArrowRef.current.style.opacity = String(0.35 + rightAmt * 0.65);
+        steerRightArrowRef.current.style.color = rightAmt > 0.15 ? '#38bdf8' : 'rgba(255,255,255,0.65)';
+        steerRightArrowRef.current.style.textShadow = rightAmt > 0.15 ? `0 0 ${Math.round(rightAmt * 14)}px #38bdf8` : 'none';
+        steerRightArrowRef.current.style.transform = `scale(${1 + rightAmt * 0.2})`;
+      }
       if (gaugeRef.current) gaugeRef.current.style.left = `calc(${50 + steer * 44}% - 11px)`;
     };
     id = requestAnimationFrame(tick);
@@ -551,13 +574,17 @@ export default function KartClashPhoneController({
       if (e.id <= lastEventIdRef.current) continue;
       lastEventIdRef.current = e.id;
       if (e.kartId && e.kartId !== myKart.id) continue;
-      const flashColor = e.type === 'hit' ? '#ef4444' : e.type === 'box' && e.value ? '#facc15' : e.type === 'miniturbo' || e.type === 'boost' || e.type === 'pad' || e.type === 'rocket' ? '#22d3ee' : null;
+      const flashColor = e.type === 'hit' ? '#ef4444' : e.type === 'box' && e.value ? '#facc15' : e.type === 'miniturbo' || e.type === 'boost' || e.type === 'pad' || e.type === 'rocket' || e.type === 'slipstream' ? '#22d3ee' : null;
       if (flashColor) setFlash({ key: e.id, color: flashColor });
       switch (e.type) {
         case 'hit': buzz([90, 40, 110]); break;
         case 'wall': if (e.kartId) buzz(35); break;
         case 'bump': buzz(25); break;
         case 'box': if (e.value) buzz(20); break;
+        case 'hop': buzz(12); break;
+        case 'coin': buzz(10); break;
+        case 'drift_tier': buzz(e.value === 3 ? [25, 20, 45] : e.value === 2 ? 28 : 18); break;
+        case 'slipstream': buzz(35); break;
         case 'miniturbo': buzz(e.value === 3 ? [40, 30, 80] : 45); break;
         case 'boost':
         case 'pad':
@@ -1347,7 +1374,7 @@ export default function KartClashPhoneController({
 
           {snapshot?.trackId && (
             <div style={{ background: 'rgba(15,23,42,0.85)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px', padding: '0.5rem', display: 'flex', justifyContent: 'center' }}>
-              <TrackMinimap trackId={snapshot.trackId} karts={snapshot.karts} size={230} />
+              <TrackMinimap trackId={snapshot.trackId} karts={snapshot.karts} hazards={snapshot.hazards} size={230} />
             </div>
           )}
 
@@ -1488,13 +1515,19 @@ export default function KartClashPhoneController({
     const isCountdown = !waiting && countdownMs > 0;
     const countdownSec = isCountdown ? Math.min(3, Math.ceil(countdownMs / 1000)) : 0;
     const rank = myKart?.rank || 1;
+    const rankDelta = myKart?.rankDelta || 0;
     const lap = myKart?.lap || 1;
     const totalLaps = snapshot?.totalLaps || 3;
+    const coins = myKart?.coins || 0;
     const speedKmh = Math.max(0, Math.round(Math.abs(myKart?.speed || 0) * 2.2));
     const heldItem: KartItemType | null = myKart?.heldItem || null;
     const tier = myKart?.driftLevel || 0;
-    const driftPct = myKart?.drifting ? (tier === 3 ? 100 : ((tier * 100 + (myKart?.driftCharge || 0)) / 3)) : 0;
+    const driftCharge = myKart?.driftCharge || 0;
     const tierColor = DRIFT_TIER_COLORS[tier];
+    const launchRev = myKart?.launchRev || 0;
+    const launchOverheat = launchRev > 1.2;
+    const launchSweet = launchRev > 0.05 && !launchOverheat;
+    const launchPct = Math.min(100, Math.round((launchRev / 1.5) * 100));
     const isSpunOut = (myKart?.spinOutTimer || 0) > 0;
     const isStar = (myKart?.starTimer || 0) > 0;
     const isBoost = (myKart?.boostTimer || 0) > 0;
@@ -1555,19 +1588,36 @@ export default function KartClashPhoneController({
         }}
         onUp={releaseDrift}
         style={{
+          position: 'relative',
           flex: 1,
           minHeight: 0,
           width: '100%',
           borderRadius: '20px',
-          border: `3px solid ${showTrickPrompt ? '#22ff66' : tier > 0 ? tierColor : isDrifting ? '#facc15' : 'rgba(56,189,248,0.5)'}`,
+          border: `3px solid ${
+            showTrickPrompt
+              ? '#22ff66'
+              : isCountdown
+                ? (launchOverheat ? '#ef4444' : launchSweet ? '#22c55e' : countdownSec === 1 ? '#facc15' : 'rgba(56,189,248,0.5)')
+                : tier > 0
+                  ? tierColor
+                  : isDrifting
+                    ? '#facc15'
+                    : 'rgba(56,189,248,0.5)'
+          }`,
           background: showTrickPrompt
             ? 'rgba(34,255,102,0.3)'
-            : tier > 0
-              ? `radial-gradient(circle at 50% 40%, ${tierColor}77, rgba(10,14,28,0.95))`
-              : isDrifting
-                ? 'rgba(250,204,21,0.2)'
-                : isCountdown && countdownSec === 1
-                  ? 'rgba(250,204,21,0.32)'
+            : isCountdown
+              ? (launchOverheat
+                  ? 'rgba(239,68,68,0.28)'
+                  : launchSweet
+                    ? 'rgba(34,197,94,0.26)'
+                    : countdownSec === 1
+                      ? 'rgba(250,204,21,0.32)'
+                      : 'rgba(15,23,42,0.9)')
+              : tier > 0
+                ? `radial-gradient(circle at 50% 40%, ${tierColor}77, rgba(10,14,28,0.95))`
+                : isDrifting
+                  ? 'rgba(250,204,21,0.2)'
                   : 'rgba(15,23,42,0.9)',
           color: '#f8fafc',
           display: 'flex',
@@ -1577,30 +1627,83 @@ export default function KartClashPhoneController({
           gap: '0.2rem',
           padding: '0.3rem 0.5rem',
           overflow: 'hidden',
-          boxShadow: tier === 3 ? '0 0 28px #d946efaa' : undefined,
+          boxShadow: tier > 0 ? `0 0 22px ${tierColor}88` : undefined,
         }}
       >
-        <span style={{ fontSize: 'clamp(1.5rem, 12vmin, 2.6rem)', lineHeight: 1 }}>
-          {showTrickPrompt ? '🤸' : isCountdown ? '🚀' : tier === 3 ? '💜' : tier === 2 ? '🔥' : tier === 1 ? '💨' : isDrifting ? '〰️' : '💨'}
+        {tier > 0 && !showTrickPrompt && !isCountdown && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: 'inherit',
+              pointerEvents: 'none',
+              boxShadow: `inset 0 0 18px ${tierColor}`,
+              animation: 'kartPulse 460ms ease-in-out infinite alternate',
+            }}
+          />
+        )}
+        <span style={{ fontSize: 'clamp(1.45rem, 11.5vmin, 2.4rem)', lineHeight: 1 }}>
+          {showTrickPrompt
+            ? '🤸'
+            : isCountdown
+              ? (launchOverheat ? '⚠️' : launchSweet ? '🔥' : '🚀')
+              : tier === 3
+                ? '💜'
+                : tier === 2
+                  ? '🔥'
+                  : tier === 1
+                    ? '💨'
+                    : isDrifting
+                      ? '〰️'
+                      : '💨'}
         </span>
-        <span style={{ fontWeight: 900, fontSize: 'clamp(0.78rem, 4.2vmin, 1.05rem)', textAlign: 'center', lineHeight: 1.05 }}>
+        <span style={{ fontWeight: 900, fontSize: 'clamp(0.74rem, 4vmin, 1rem)', textAlign: 'center', lineHeight: 1.05, color: isCountdown && launchOverheat ? '#fca5a5' : isCountdown && launchSweet ? '#86efac' : '#f8fafc' }}>
           {showTrickPrompt
             ? 'TRICK NOW!'
             : isCountdown
-              ? (countdownSec === 1 ? 'HOLD NOW!' : 'Wait for 1...')
-              : tier === 3
-                ? 'ULTRA! Let go!'
-                : tier === 2
-                  ? 'SUPER! Let go!'
-                  : tier === 1
-                    ? 'MINI! Let go!'
-                    : isDrifting
-                      ? 'Steer in...'
-                      : 'DRIFT'}
+              ? (launchOverheat
+                  ? '⚠️ OVERHEAT!'
+                  : launchSweet
+                    ? '🔥 SWEET SPOT! HOLD'
+                    : countdownSec === 1
+                      ? 'HOLD NOW!'
+                      : 'WAIT')
+              : tier > 0
+                ? `${DRIFT_TIER_LABELS[tier]}! Let go!`
+                : isDrifting
+                  ? 'Steer in...'
+                  : 'DRIFT'}
         </span>
-        <div style={{ width: '86%', height: '7px', borderRadius: '999px', background: 'rgba(255,255,255,0.14)', overflow: 'hidden', flexShrink: 0 }}>
-          <div style={{ width: `${driftPct}%`, height: '100%', borderRadius: '999px', background: tier === 0 ? '#e2e8f0' : tierColor, transition: 'width 90ms linear' }} />
-        </div>
+        {isCountdown ? (
+          <div style={{ width: '88%', height: '9px', borderRadius: '999px', background: 'rgba(255,255,255,0.12)', position: 'relative', overflow: 'hidden', flexShrink: 0, border: '1px solid rgba(255,255,255,0.16)' }}>
+            {/* Sweet spot and overheat zones */}
+            <div style={{ position: 'absolute', left: '4%', width: '76%', top: 0, bottom: 0, background: 'rgba(34,197,94,0.22)' }} />
+            <div style={{ position: 'absolute', left: '80%', width: '20%', top: 0, bottom: 0, background: 'rgba(239,68,68,0.28)' }} />
+            <div style={{ width: `${launchPct}%`, height: '100%', borderRadius: '999px', background: launchOverheat ? '#ef4444' : launchSweet ? '#22c55e' : '#facc15', transition: 'width 70ms linear' }} />
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px', width: '88%', flexShrink: 0 }}>
+            {([1, 2, 3] as const).map((seg) => {
+              const segPct = tier >= seg ? 100 : tier === seg - 1 && myKart?.drifting ? driftCharge : 0;
+              const segColor = DRIFT_TIER_COLORS[seg];
+              return (
+                <div
+                  key={seg}
+                  style={{
+                    height: '8px',
+                    borderRadius: '999px',
+                    background: 'rgba(255,255,255,0.12)',
+                    border: `1px solid ${tier >= seg ? segColor : 'rgba(255,255,255,0.14)'}`,
+                    overflow: 'hidden',
+                    boxShadow: tier >= seg ? `0 0 8px ${segColor}99` : 'none',
+                  }}
+                >
+                  <div style={{ width: `${segPct}%`, height: '100%', borderRadius: '999px', background: segColor, transition: 'width 80ms linear' }} />
+                </div>
+              );
+            })}
+          </div>
+        )}
       </HoldButton>
     );
 
@@ -1651,24 +1754,121 @@ export default function KartClashPhoneController({
           width: '100%',
           position: 'relative',
           borderRadius: '20px',
-          border: '2px solid rgba(255,255,255,0.18)',
-          background: 'linear-gradient(90deg, rgba(56,189,248,0.2), rgba(15,23,42,0.9) 50%, rgba(56,189,248,0.2))',
+          border: '2px solid rgba(56,189,248,0.32)',
+          background: 'linear-gradient(90deg, rgba(14,165,233,0.22), rgba(15,23,42,0.95) 50%, rgba(14,165,233,0.22))',
           touchAction: 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0 0.7rem',
+          padding: '0 0.65rem',
           fontSize: 'clamp(1.4rem, 9vmin, 2rem)',
-          color: 'rgba(255,255,255,0.7)',
+          color: 'rgba(255,255,255,0.65)',
           userSelect: 'none',
           WebkitUserSelect: 'none',
           overflow: 'hidden',
+          boxShadow: 'inset 0 0 24px rgba(2,132,199,0.18)',
         }}
       >
-        <span>◀</span>
-        <span style={{ position: 'absolute', left: 0, right: 0, textAlign: 'center', bottom: '0.4rem', fontSize: '0.68rem', fontWeight: 800, color: '#94a3b8' }}>DRAG TO STEER</span>
-        <span>▶</span>
-        <div ref={steerBarRef} style={{ position: 'absolute', top: '12%', bottom: '12%', width: '24px', borderRadius: '999px', background: '#38bdf8', boxShadow: '0 0 14px #38bdf8', left: 'calc(50% - 12px)', pointerEvents: 'none' }} />
+        {/* Center deadzone notch */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '46%',
+            width: '8%',
+            top: '22%',
+            bottom: '22%',
+            borderRadius: '6px',
+            background: 'rgba(255,255,255,0.06)',
+            borderLeft: '1px solid rgba(255,255,255,0.16)',
+            borderRight: '1px solid rgba(255,255,255,0.16)',
+            pointerEvents: 'none',
+          }}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '18%',
+            bottom: '18%',
+            width: '2px',
+            transform: 'translateX(-1px)',
+            background: 'rgba(255,255,255,0.32)',
+            pointerEvents: 'none',
+          }}
+        />
+        {/* Graduated left/right steering ticks */}
+        {[10, 20, 30, 40, 60, 70, 80, 90].map((pct) => {
+          const dist = Math.abs(pct - 50);
+          const tickH = dist >= 35 ? '36%' : dist >= 25 ? '26%' : '18%';
+          return (
+            <div
+              key={pct}
+              style={{
+                position: 'absolute',
+                left: `${pct}%`,
+                top: '50%',
+                transform: 'translate(-1px, -50%)',
+                width: '2px',
+                height: tickH,
+                borderRadius: '2px',
+                background: dist >= 35 ? 'rgba(56,189,248,0.45)' : 'rgba(255,255,255,0.2)',
+                pointerEvents: 'none',
+              }}
+            />
+          );
+        })}
+        {/* Arcade steering rail & glowing directional fill */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '4%',
+            right: '4%',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            height: '12px',
+            borderRadius: '999px',
+            background: 'rgba(15,23,42,0.9)',
+            border: '1px solid rgba(255,255,255,0.14)',
+            pointerEvents: 'none',
+          }}
+        />
+        <div
+          ref={steerFillRef}
+          style={{
+            position: 'absolute',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            height: '12px',
+            left: '50%',
+            width: '0%',
+            opacity: 0,
+            borderRadius: '999px',
+            background: 'linear-gradient(90deg, #0ea5e9, #38bdf8)',
+            boxShadow: '0 0 14px #38bdf8',
+            pointerEvents: 'none',
+          }}
+        />
+        <span ref={steerLeftArrowRef} style={{ position: 'relative', zIndex: 2, opacity: 0.35, pointerEvents: 'none' }}>◀</span>
+        <span style={{ position: 'absolute', left: 0, right: 0, textAlign: 'center', bottom: '0.35rem', fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.06em', color: '#94a3b8', pointerEvents: 'none' }}>
+          DRAG TO STEER
+        </span>
+        <span ref={steerRightArrowRef} style={{ position: 'relative', zIndex: 2, opacity: 0.35, pointerEvents: 'none' }}>▶</span>
+        <div
+          ref={steerBarRef}
+          style={{
+            position: 'absolute',
+            top: '14%',
+            bottom: '14%',
+            width: '24px',
+            borderRadius: '999px',
+            background: 'linear-gradient(180deg, #7dd3fc, #0284c7)',
+            border: '2px solid #ffffff',
+            boxShadow: '0 0 16px #38bdf8',
+            left: 'calc(50% - 12px)',
+            pointerEvents: 'none',
+            zIndex: 3,
+          }}
+        />
       </div>
     );
 
@@ -1708,17 +1908,32 @@ export default function KartClashPhoneController({
 
         {/* Centre: position, lap, wheel */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', minHeight: 0, minWidth: 0, alignItems: 'stretch' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '0.5rem', flexShrink: 0, lineHeight: 1, visibility: isCountdown && showTiltPrompt ? 'hidden' : undefined }}>
-            <span style={{ fontFamily: 'var(--party-font-display)', fontSize: 'clamp(1.8rem, 15vmin, 3.2rem)', fontWeight: 900, color: rankColor }}>{ordinal(rank)}</span>
-            <span style={{ fontWeight: 900, fontSize: 'clamp(0.8rem, 4.4vmin, 1.1rem)', color: '#cbd5e1' }}>LAP {lap}/{totalLaps}</span>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '0.45rem', flexShrink: 0, lineHeight: 1, visibility: isCountdown && showTiltPrompt ? 'hidden' : undefined }}>
+            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.18rem' }}>
+              <span style={{ fontFamily: 'var(--party-font-display)', fontSize: 'clamp(1.7rem, 14vmin, 3rem)', fontWeight: 900, color: rankColor }}>{ordinal(rank)}</span>
+              {rankDelta !== 0 && (
+                <span style={{ fontSize: 'clamp(0.74rem, 3.6vmin, 0.96rem)', fontWeight: 900, color: rankDelta > 0 ? '#4ade80' : '#f87171' }}>
+                  {rankDelta > 0 ? '▲' : '▼'}
+                </span>
+              )}
+            </span>
+            <span style={{ fontWeight: 900, fontSize: 'clamp(0.76rem, 4vmin, 1.05rem)', color: '#cbd5e1' }}>LAP {lap}/{totalLaps}</span>
+            <span style={{ fontWeight: 900, fontSize: 'clamp(0.68rem, 3.4vmin, 0.88rem)', color: coins > 0 ? '#facc15' : '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
+              🪙 {coins}/{MAX_COINS}
+            </span>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '3px', flexShrink: 0 }}>
-            {Array.from({ length: 10 }).map((_, i) => {
-              const lit = i / 10 < speedKmh / 170;
-              const color = isBoost || isStar ? '#22d3ee' : i < 5 ? '#22c55e' : i < 8 ? '#facc15' : '#ef4444';
-              return <div key={i} style={{ flex: 1, maxWidth: '16px', height: 'clamp(4px, 2vmin, 8px)', borderRadius: '2px', background: lit ? color : 'rgba(255,255,255,0.12)' }} />;
-            })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '3px', flex: 1 }}>
+              {Array.from({ length: 10 }).map((_, i) => {
+                const lit = i / 10 < speedKmh / 170;
+                const color = isBoost || isStar ? '#22d3ee' : i < 5 ? '#22c55e' : i < 8 ? '#facc15' : '#ef4444';
+                return <div key={i} style={{ flex: 1, maxWidth: '16px', height: 'clamp(4px, 2vmin, 8px)', borderRadius: '2px', background: lit ? color : 'rgba(255,255,255,0.12)' }} />;
+              })}
+            </div>
+            <span style={{ fontWeight: 900, fontSize: 'clamp(0.64rem, 3vmin, 0.8rem)', color: isBoost || isStar ? '#22d3ee' : '#e2e8f0', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+              {speedKmh} km/h
+            </span>
           </div>
 
           {safariBarsShowing && !barsHintDismissed && (
@@ -1754,7 +1969,7 @@ export default function KartClashPhoneController({
                 <span style={{ fontSize: 'clamp(0.6rem, 3vmin, 0.74rem)', fontWeight: 700, opacity: 0.8 }}>Then choose Allow</span>
               </button>
             ) : snapshot?.trackId ? (
-              <TrackMinimap trackId={snapshot.trackId} karts={snapshot.karts} highlightId={meId} size={260} />
+              <TrackMinimap trackId={snapshot.trackId} karts={snapshot.karts} hazards={snapshot.hazards} highlightId={meId} size={260} />
             ) : null}
           </div>
 
@@ -1944,6 +2159,33 @@ export default function KartClashPhoneController({
         {pd?.fastestLap && (
           <div style={{ textAlign: 'center', padding: '0.35rem 0.75rem', borderRadius: '10px', background: 'rgba(217,70,239,0.18)', border: '1px solid #d946ef', color: '#f0abfc', fontSize: '0.8rem', fontWeight: 800 }}>
             ⏱ Fastest lap: {pd.fastestLap.racerName} ({formatRaceTime(pd.fastestLap.timeMs)})
+          </div>
+        )}
+
+        {Array.isArray(pd?.highlights) && pd.highlights.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' }}>
+            {pd.highlights.map((h: any, idx: number) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  padding: '0.28rem 0.65rem',
+                  borderRadius: '999px',
+                  background: 'rgba(15,23,42,0.85)',
+                  border: '1px solid rgba(56,189,248,0.32)',
+                  fontSize: '0.74rem',
+                  fontWeight: 800,
+                  color: '#e2e8f0',
+                }}
+              >
+                <span>{h.emoji}</span>
+                <span style={{ color: '#38bdf8' }}>{h.label}:</span>
+                <span>{h.racerName}</span>
+                <span style={{ color: '#94a3b8', fontWeight: 700 }}>({h.detail})</span>
+              </div>
+            ))}
           </div>
         )}
 

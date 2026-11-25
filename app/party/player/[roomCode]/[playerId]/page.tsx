@@ -9,7 +9,7 @@ import { useImmersive } from '@/components/party/HostShow';
 import { ReactionBar, PhoneSessionControls, HowToPlayModal, ShareInviteButton, safetyQuip, useTurnBuzz } from '@/components/party/PhoneExtras';
 import { DebateDuelPhone } from '@/components/party/DebateDuelViews';
 import KartClashPhoneController from '@/components/party/KartClashPhoneController';
-import { KART_STYLES } from '@/lib/party/kart-shared';
+import { KART_STAT_BARS, KART_STYLES } from '@/lib/party/kart-shared';
 import { GameSwitcher } from '@/components/party/GamePicker';
 import { GAME_CATALOG, GAME_INFO, gameLabel } from '@/lib/party/catalog';
 import { GAME_GUIDES } from '@/lib/party/guides';
@@ -495,6 +495,42 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                       </button>
                     ))}
                   </div>
+
+                  {/* Chassis Stat Bars */}
+                  {(() => {
+                    const stats = KART_STAT_BARS[currentStyle] || KART_STAT_BARS.classic;
+                    const statRows = [
+                      { label: 'Speed', value: stats.speed, color: '#38bdf8' },
+                      { label: 'Accel', value: stats.accel, color: '#22c55e' },
+                      { label: 'Handling', value: stats.turn, color: '#facc15' },
+                      { label: 'Drift', value: stats.drift, color: '#d946ef' },
+                      { label: 'Weight', value: stats.weight, color: '#f97316' },
+                    ];
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.28rem 0.65rem', marginBottom: '0.65rem', padding: '0.45rem 0.55rem', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                        {statRows.map((row) => (
+                          <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <span style={{ width: '48px', fontSize: '0.66rem', fontWeight: 700, color: 'var(--party-text-muted)', flexShrink: 0 }}>
+                              {row.label}
+                            </span>
+                            <div style={{ display: 'flex', gap: '2px', flex: 1 }}>
+                              {[1, 2, 3, 4, 5].map((seg) => (
+                                <div
+                                  key={seg}
+                                  style={{
+                                    flex: 1,
+                                    height: '5px',
+                                    borderRadius: '2px',
+                                    background: seg <= row.value ? row.color : 'rgba(255,255,255,0.1)',
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                   {/* Drift Sparks / Underglow Palette */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
