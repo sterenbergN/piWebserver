@@ -353,6 +353,12 @@ function RaceView({
       case 'slipstream':
         if (kart && !kart.isBot) pushFeed(`💨 ${kart.avatar} ${kart.name} hit a slipstream boost!`, '#38bdf8');
         break;
+      case 'shortcut':
+        if (kart && !kart.isBot) {
+          speakCommentary(line(['{name} found the secret shortcut!', 'Sneaky move! {name} takes the hidden path!'], { name: kart.name }));
+          pushFeed(`✨ ${kart.avatar} ${kart.name} hit the secret cut!`, '#4ade80');
+        }
+        break;
     }
   }, [pushFeed, speakCommentary]);
 
@@ -1105,6 +1111,16 @@ export default function KartClashHostView({
                     <span className="badge" style={{ fontSize: '0.68rem', background: 'rgba(5,8,18,0.55)', borderColor: 'rgba(255,255,255,0.2)' }}>
                       {BIOME_BADGES[t.biome]}
                     </span>
+                    {t.splitSections.length > 0 && (
+                      <span className="badge" style={{ fontSize: '0.68rem', background: 'rgba(5,8,18,0.55)', borderColor: 'rgba(192,132,252,0.4)', color: '#e9d5ff' }}>
+                        🔀 Split Path{t.splitSections.length > 1 ? ` ×${t.splitSections.length}` : ''}
+                      </span>
+                    )}
+                    {t.shortcuts.length > 0 && (
+                      <span className="badge" style={{ fontSize: '0.68rem', background: 'rgba(5,8,18,0.55)', borderColor: 'rgba(74,222,128,0.4)', color: '#86efac' }}>
+                        🌿 {t.shortcuts.length} Secret Cut{t.shortcuts.length === 1 ? '' : 's'}
+                      </span>
+                    )}
                     <span className="badge" style={{ fontSize: '0.68rem', background: 'rgba(5,8,18,0.55)', borderColor: 'rgba(250,204,21,0.35)', color: '#fde047' }}>
                       ⚡ {t.boostPads.length} boost{t.boostPads.length === 1 ? '' : 's'}
                     </span>

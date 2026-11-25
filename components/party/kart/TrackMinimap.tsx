@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { KART_TRACKS, TrackId } from '@/lib/party/kart-tracks';
+import { KART_TRACKS, TrackId, getTrackBoundsAt, sampleTrackAtProgress } from '@/lib/party/kart-tracks';
 
-/** Top-down course map with the start line and, during a race, every racer's position. */
+/** Top-down course map with the start line, split paths, shortcuts and, during a race, every racer's position. */
 export default function TrackMinimap({
   trackId,
   karts,
@@ -20,6 +20,35 @@ export default function TrackMinimap({
   const track = KART_TRACKS[trackId] || KART_TRACKS['sunny-circuit'];
 
   const map = useMemo(() => {
+    const splitBranches = (track.splitSections || []).map((sp) => {
+      const span = sp.startProgress <= sp.endProgress
+        ? sp.endProgress - sp.startProgress
+        : 1 - sp.startProgress + sp.endProgress;
+      const leftPts: string[] = [];
+      const rightPts: string[] = [];
+      const steps = 28;
+      for (let i = 0; i <= steps; i++) {
+        const p = (sp.startProgress + (i / steps) * span) % 1;
+        const s = sampleTrackAtProgress(track, p);
+        const bounds = getTrackBoundsAt(track, p);
+        const laneCenter = bounds.dividerHalf + (bounds.halfRoad - bounds.dividerHalf) * 0.55;
+        const lx = s.x - s.nx * laneCenter;
+        const lz = s.z - s.nz * laneCenter;
+        const rx = s.x + s.nx * laneCenter;
+        const rz = s.z + s.nz * laneCenter;
+        leftPts.push(`${lx.toFixed(1)},${lz.toFixed(1)}`);
+        rightPts.push(`${rx.toFixed(1)},${rz.toFixed(1)}`);
+      }
+      return { id: sp.id, left: leftPts.join(' '), right: rightPts.join(' ') };
+    });
+
+    const shortcutPaths = (track.shortcuts || [])
+      .filter((sc) => sc.points.length >= 2)
+      .map((sc) => ({
+        id: sc.id,
+        points: sc.points.map((pt) => `${pt.x.toFixed(1)},${pt.z.toFixed(1)}`).join(' '),
+      }));
+
     const xs = track.samples.map((s) => s.x);
     const zs = track.samples.map((s) => s.z);
     const minX = Math.min(...xs);
@@ -34,6 +63,8 @@ export default function TrackMinimap({
       vx: (minX + maxX) / 2 - span / 2,
       vz: (minZ + maxZ) / 2 - span / 2,
       points: track.samples.filter((_, i) => i % 3 === 0).map((s) => `${s.x.toFixed(1)},${s.z.toFixed(1)}`).join(' '),
+      splitBranches,
+      shortcutPaths,
       startLine: { x1: start.x - start.nx * half, y1: start.z - start.nz * half, x2: start.x + start.nx * half, y2: start.z + start.nz * half },
     };
   }, [track]);
@@ -50,9 +81,48 @@ export default function TrackMinimap({
       style={{ display: 'block', width: size, height: size, maxWidth: '100%', maxHeight: '100%', flexShrink: 1, minWidth: 0, minHeight: 0 }}
       aria-hidden
     >
+      {/* Hidden shortcuts as subtle dashed cut-across paths */}
+      {map.shortcutPaths.map((sc) => (
+        <polyline
+          key={sc.id}
+          points={sc.points}
+          fill="none"
+          stroke={track.theme.accentColor}
+          strokeWidth={unit * 2.1}
+          strokeDasharray={`${unit * 2.4} ${unit * 2.1}`}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={0.45}
+        />
+      ))}
+
+      {/* Layer 1: Outer dark track + split fork borders */}
       <polygon points={map.points} fill="none" stroke="rgba(0,0,0,0.65)" strokeWidth={unit * 9} strokeLinejoin="round" />
+      {map.splitBranches.map((b) => (
+        <g key={`${b.id}-outline`}>
+          <polyline points={b.left} fill="none" stroke="rgba(0,0,0,0.65)" strokeWidth={unit * 7.2} strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={b.right} fill="none" stroke="rgba(0,0,0,0.65)" strokeWidth={unit * 7.2} strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      ))}
+
+      {/* Layer 2: Biome accent road + split forks */}
       <polygon points={map.points} fill="none" stroke={track.theme.accentColor} strokeWidth={unit * 6.2} strokeLinejoin="round" />
+      {map.splitBranches.map((b) => (
+        <g key={`${b.id}-accent`}>
+          <polyline points={b.left} fill="none" stroke={track.theme.accentColor} strokeWidth={unit * 4.8} strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={b.right} fill="none" stroke={track.theme.accentColor} strokeWidth={unit * 4.8} strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      ))}
+
+      {/* Layer 3: Inner white track + split lanes */}
       <polygon points={map.points} fill="none" stroke="#f8fafc" strokeWidth={unit * 3.2} strokeLinejoin="round" />
+      {map.splitBranches.map((b) => (
+        <g key={`${b.id}-inner`}>
+          <polyline points={b.left} fill="none" stroke="#f8fafc" strokeWidth={unit * 2.4} strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={b.right} fill="none" stroke="#f8fafc" strokeWidth={unit * 2.4} strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      ))}
+
       <line {...map.startLine} stroke="#0b0f1a" strokeWidth={unit * 2.6} />
       <line {...map.startLine} stroke="#ffffff" strokeWidth={unit * 2.6} strokeDasharray={`${unit * 1.5} ${unit * 1.5}`} />
       {bots.map((k) => (
