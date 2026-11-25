@@ -41,7 +41,17 @@ class PartyAudio {
   private mood: Mood | null = null;
   private step = 0;
   private nextTime = 0;
+  private speakingListeners = new Set<(speaking: boolean) => void>();
   prefs: SoundPrefs = { music: true, sfx: true, voice: true };
+
+  onSpeaking(fn: (speaking: boolean) => void): () => void {
+    this.speakingListeners.add(fn);
+    return () => { this.speakingListeners.delete(fn); };
+  }
+
+  private emitSpeaking(speaking: boolean) {
+    this.speakingListeners.forEach((fn) => fn(speaking));
+  }
 
   /** Browsers only allow audio after a user gesture; call from a click. */
   unlock() {
@@ -147,7 +157,11 @@ class PartyAudio {
     this.prefs = prefs;
     savePrefs(prefs);
     if (!prefs.music) { const m = this.mood; this.music(null); this.mood = m; }
-    if (!prefs.voice && typeof speechSynthesis !== 'undefined') { this.sayId++; speechSynthesis.cancel(); }
+    if (!prefs.voice && typeof speechSynthesis !== 'undefined') {
+      this.sayId++;
+      speechSynthesis.cancel();
+      this.emitSpeaking(false);
+    }
   }
 
   /** Quiet the room for a pause. `resumeMusic` picks the music back up. */
@@ -156,7 +170,10 @@ class PartyAudio {
     this.music(null);
     this.mood = m;
     this.sayId++;
-    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    if (typeof speechSynthesis !== 'undefined') {
+      speechSynthesis.cancel();
+      this.emitSpeaking(false);
+    }
   }
 
   resumeMusic() {
@@ -188,6 +205,7 @@ class PartyAudio {
     if (id !== this.sayId) return;
     const voice = chooseVoice(speechSynthesis.getVoices(), this.prefs.voiceName);
     const duck = (down: boolean) => {
+      this.emitSpeaking(down);
       if (!this.musicGain || !this.ctx) return;
       this.musicGain.gain.setTargetAtTime(down ? 0.07 : 0.22, this.ctx.currentTime, down ? 0.1 : 0.3);
     };
