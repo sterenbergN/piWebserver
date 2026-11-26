@@ -348,7 +348,7 @@ export function normalizeSettings(value: unknown): TicketSettings {
 
 export const isNew = (t: Ticket) => !t.seenAt;
 
-export type BulkUpdate = { id: string; status?: unknown; reply?: unknown; reason?: unknown; commit?: unknown; related?: unknown };
+export type BulkUpdate = { id: string; status?: unknown; reply?: unknown; reason?: unknown; commit?: unknown; related?: unknown; duplicateOf?: unknown };
 
 /**
  * Several updates at once: "mark in progress" after copying, or Claude's pasted report
@@ -376,6 +376,15 @@ export function applyBulk(list: Ticket[], updates: BulkUpdate[], by: 'admin' | '
     applyPatch(found, patch, now, by);
     if (u.commit !== undefined) addCommit(found, u.commit, undefined, by, now);
     changed.set(found.id, found);
+    // A duplicate replaces whatever link the pair had (say, "related" from an earlier report).
+    if (u.duplicateOf !== undefined) {
+      try {
+        for (const t of linkTickets(list, found.id, u.duplicateOf, 'duplicate_of', by, now)) changed.set(t.id, t);
+      } catch (error) {
+        if (!(error instanceof TicketInputError)) throw error;
+        skippedLinks.push(`${found.id} → ${String(u.duplicateOf).slice(0, 64)}: ${error.message}`);
+      }
+    }
     for (const other of Array.isArray(u.related) ? u.related : []) {
       // Already linked (say, marked a duplicate by hand): a report doesn't turn it into "related".
       if (found.links?.some((l) => l.id === other)) continue;

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { buildPrompt, displayName, parseReport, type ParsedReport } from '@/lib/tickets/prompt';
+import { buildPrompt, displayName, otherTickets, parseReport, type ParsedReport } from '@/lib/tickets/prompt';
 import type { LinkRelation, TicketEvent } from '@/lib/tickets/history';
 import type { Ticket } from '@/lib/tickets/tickets';
 import './TicketsPanel.css';
@@ -175,7 +175,8 @@ export default function TicketsPanel() {
 
   async function copyForClaude() {
     if (toCopy.length === 0) { setNotice({ kind: 'error', text: 'No tickets to copy for that choice' }); return; }
-    const text = buildPrompt(toCopy);
+    // The newest other tickets go along so Claude can link new ones to them.
+    const text = buildPrompt(toCopy, new Date(), otherTickets(tickets, toCopy));
     const ok = await copyText(text);
     setCopied({ ids: toCopy.filter((t) => t.status === 'open').map((t) => t.id), text, failed: !ok });
     if (ok) setNotice({ kind: 'success', text: `Copied ${toCopy.length} ticket${toCopy.length === 1 ? '' : 's'}. Paste it into Claude Code.` });
@@ -313,8 +314,12 @@ function ReportCard({ tickets, onApplied, onError }: { tickets: Ticket[]; onAppl
     if (!known.length) return;
     setBusy(true);
     try {
-      // Unknown related ids are left out here; the server checks the rest again.
-      const updates = known.map((u) => ({ ...u, ...(u.related ? { related: u.related.filter((id) => byId.has(id)) } : {}) }));
+      // Unknown related or duplicate ids are left out here; the server checks the rest again.
+      const updates = known.map(({ duplicateOf, ...u }) => ({
+        ...u,
+        ...(u.related ? { related: u.related.filter((id) => byId.has(id)) } : {}),
+        ...(duplicateOf && byId.has(duplicateOf) ? { duplicateOf } : {}),
+      }));
       const res = await post('/api/admin/tickets/bulk', 'POST', { updates, source: 'claude' });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || 'Could not apply that');
@@ -347,6 +352,7 @@ function ReportCard({ tickets, onApplied, onError }: { tickets: Ticket[]; onAppl
                 {u.status && u.status !== t.status && <span>{STATUS_LABEL[t.status]} → <b>{STATUS_LABEL[u.status]}</b>{isClosed(t.status) && !isClosed(u.status) ? ' (reopens it; the reply is the reason)' : ''}</span>}
                 {u.reply && <span className="tkp-quote">Reply: {u.reply}</span>}
                 {u.commit && <span>Commit <code>{u.commit}</code></span>}
+                {u.duplicateOf && <span>Duplicate of: {byId.has(u.duplicateOf) ? `${u.duplicateOf} (${firstLine(byId.get(u.duplicateOf)!, 40)})` : `${u.duplicateOf} (no such ticket, skipped)`}</span>}
                 {u.related && u.related.length > 0 && (
                   <span>Links to: {u.related.map((id) => (byId.has(id) ? `${id} (${firstLine(byId.get(id)!, 40)})` : `${id} (no such ticket, skipped)`)).join(', ')}</span>
                 )}

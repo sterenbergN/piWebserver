@@ -194,3 +194,20 @@ test('a pasted report records the commit and links related tickets, as Claude', 
   a.status = 'done';
   assert.throws(() => applyBulk(list, [{ id: 'a', status: 'open' }], 'admin', day(4)), /why/);
 });
+
+test('a report can mark a duplicate: linked both ways as one, replacing a "related" link', () => {
+  const list = [mk({}, 'a'), mk({}, 'b'), mk({}, 'c')];
+  const [a, b, c] = list;
+  linkTickets(list, 'a', 'b', 'related', 'claude', day(1));
+  const out = applyBulk(list, [{ id: 'a', status: 'done', duplicateOf: 'b' }, { id: 'c', duplicateOf: 'missing' }], 'claude', day(2));
+  assert.deepEqual(a.links?.map((l) => [l.id, l.rel]), [['b', 'duplicate_of']]);
+  assert.deepEqual(b.links?.map((l) => [l.id, l.rel]), [['a', 'duplicated_by']]);
+  assert.ok(a.history!.some((e) => e.kind === 'linked' && e.by === 'claude' && e.rel === 'duplicate_of'));
+  assert.equal(a.status, 'done', 'its status is whatever the report set');
+  assert.equal(c.links, undefined);
+  assert.equal(out.skippedLinks.length, 1, 'an unknown duplicate is skipped, not fatal');
+  // The same report pasted twice changes nothing more.
+  const before = a.history!.length;
+  applyBulk(list, [{ id: 'a', duplicateOf: 'b' }], 'claude', day(3));
+  assert.equal(a.history!.length, before);
+});

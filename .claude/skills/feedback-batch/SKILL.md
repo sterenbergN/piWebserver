@@ -38,10 +38,12 @@ Commit straight to `master` (the user pushes), one commit per coherent change. T
 Tell the user, in plain language: what each ticket was, what you changed and how you checked it, and what's not verified (for example, untested on the Pi or on an iPhone). Then end the message with one fenced JSON block, an update for every ticket in the batch:
 
 ```json
-[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: …", "commit": "<short hash>", "related": ["<other ticket id>"] }]
+[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: …", "commit": "<short hash>", "related": ["<other ticket id>"], "duplicate_of": "<ticket id>" }]
 ```
 
 - `status`: `open`, `in_progress`, `done` (only for what's actually finished), or `wontfix` (say why).
 - `reply`: a short, friendly note to the person, with no internal details and no email addresses. Leave it empty (`""`) for tickets filed by the site.
 - `commit` (optional): the short hash of the commit that fixed or built it, so the ticket's timeline records it. Commit first, then write the report.
-- `related` (optional): ids of other tickets it ties to (same cause, follow-up, duplicate). Each ticket's block in the batch shows its links and recent timeline (reopen reasons, earlier replies): read them before triaging.
+- `related` (optional): ids of other tickets it ties to (same cause, follow-up). Each ticket's block in the batch shows its links and recent timeline (reopen reasons, earlier replies): read them before triaging.
+- `duplicate_of` (optional): the id of the ticket this one repeats. It's linked as a duplicate both ways (replacing a "related" link); set the status yourself.
+- **Link tickets yourself**, so the user doesn't have to. Both fields take ids from the batch or from its "Other tickets, for linking" list (the newest tickets outside the batch, with their status and fix commits). A bug that matches a done ticket is worth a look at that fix: it may have come back.

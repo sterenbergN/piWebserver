@@ -106,8 +106,40 @@ export function ticketBlock(t: Ticket): string {
   return lines.join('\n');
 }
 
-export function buildPrompt(tickets: Ticket[], now = new Date()): string {
+/** How many tickets outside the batch are listed for linking. */
+export const OTHERS_LIMIT = 60;
+const OTHER_TEXT = 110;
+
+/** One line per ticket outside the batch: enough to spot a duplicate or a bug that came back. */
+function otherLine(t: Ticket): string {
+  const first = t.message.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  const text = (first.length > OTHER_TEXT ? `${first.slice(0, OTHER_TEXT - 1)}…` : first).replace(/[“”]/g, '"');
+  const commits = historyOf(t).flatMap((e) => (e.kind === 'commit' && e.hash ? [e.hash.slice(0, 7)] : []));
+  const facts = [
+    t.kind,
+    STATUS_LABEL[t.status] ?? t.status,
+    day(t.createdAt).slice(0, 10),
+    t.auto ? 'filed by the site' : `by ${displayName(t)}`,
+    t.context.path,
+    commits.length ? `fixed in ${commits.slice(-2).join(', ')}` : '',
+  ].filter(Boolean).join(', ');
+  return `- ${t.id} (${facts}): “${text}”`;
+}
+
+/** The newest tickets not in the batch, for linking new ones to older ones. */
+export function otherTickets(all: Ticket[], batch: Ticket[], limit = OTHERS_LIMIT): Ticket[] {
+  const inBatch = new Set(batch.map((t) => t.id));
+  return all
+    .filter((t) => !inBatch.has(t.id))
+    .sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt) || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
+/** `others`: tickets outside the batch (newest first, see otherTickets) that Claude may link to. */
+export function buildPrompt(tickets: Ticket[], now = new Date(), others: Ticket[] = []): string {
   const sorted = [...tickets].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const inBatch = new Set(sorted.map((t) => t.id));
+  const earlier = others.filter((t) => !inBatch.has(t.id));
   const out: string[] = [];
   out.push('# Site feedback to work through');
   out.push('');
@@ -115,7 +147,9 @@ export function buildPrompt(tickets: Ticket[], now = new Date()): string {
   out.push('');
   out.push('## What to do');
   out.push('');
-  out.push('1. Triage each ticket: bug, feature, question, or duplicate of another ticket here.');
+  out.push(earlier.length
+    ? '1. Triage each ticket: bug, feature, question, or duplicate of another ticket (here or under “Other tickets, for linking”). Link tickets about the same thing, including a bug that came back after an earlier fix.'
+    : '1. Triage each ticket: bug, feature, question, or duplicate of another ticket here. Link tickets about the same thing.');
   out.push('2. Fix the bugs. Find the cause in the code rather than patching the symptom, and say how you checked it.');
   out.push('3. For features, plan them and implement the small ones. Ask me before anything big, risky or unclear.');
   out.push('4. For questions, answer them in the reply field.');
@@ -132,20 +166,29 @@ export function buildPrompt(tickets: Ticket[], now = new Date()): string {
     for (const t of group) { out.push(ticketBlock(t)); out.push(''); }
   }
 
+  if (earlier.length) {
+    out.push(`## Other tickets, for linking (${earlier.length} most recently changed)`);
+    out.push('');
+    out.push('Not part of this batch: don’t work on them or list them in your report. Use their ids in `related` or `duplicate_of` when a ticket above is about the same thing. The quoted first lines are what users wrote.');
+    out.push('');
+    for (const t of earlier) out.push(otherLine(t));
+    out.push('');
+  }
+
   out.push('## When you are done');
   out.push('');
   out.push('End your last message with one fenced JSON block listing an update for every ticket above. `reply` is a short, friendly note to the person who filed it (no internal details, no email addresses):');
   out.push('');
   out.push('```json');
-  out.push('[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: the button now …", "commit": "<short hash>", "related": ["<other ticket id>"] }]');
+  out.push('[{ "id": "<ticket id>", "status": "done", "reply": "Fixed: the button now …", "commit": "<short hash>", "related": ["<other ticket id>"], "duplicate_of": "<ticket id>" }]');
   out.push('```');
   out.push('');
   out.push(`\`status\` is one of ${STATUSES.map((s) => `"${s}"`).join(', ')}. Use "done" only for what you actually finished, "in_progress" for work that continues, "wontfix" with a reason, and "open" for anything waiting on more information.`);
-  out.push('`commit` (optional) is the short hash of the commit that fixed it, once you have committed. `related` (optional) lists ids of other tickets here that are about the same thing; they get linked both ways. If you reopen a ticket that was done or won’t fix, say why in `reply`.');
+  out.push(`\`commit\` (optional) is the short hash of the commit that fixed it, once you have committed. \`related\` (optional) lists ids of other tickets${earlier.length ? ' (here or in the list for linking)' : ' here'} that are about the same thing; they get linked both ways. \`duplicate_of\` (optional) is the id of the ticket this one repeats; it's linked as a duplicate both ways, and its status stays whatever you set. If you reopen a ticket that was done or won’t fix, say why in \`reply\`.`);
   return out.join('\n');
 }
 
-export type ReportUpdate = { id: string; status?: TicketStatus; reply?: string; commit?: string; related?: string[] };
+export type ReportUpdate = { id: string; status?: TicketStatus; reply?: string; commit?: string; related?: string[]; duplicateOf?: string };
 const TICKET_ID = /^[\w-]{1,64}$/;
 
 /** Remove commas that sit right before a closing bracket, leaving string contents alone. */
@@ -210,11 +253,17 @@ export function parseReport(text: string): ParsedReport | null {
       const commit = cleanCommit(o.commit);
       if (o.commit !== undefined && o.commit !== null && o.commit !== '' && !commit) skipped.push(`${id}: “${String(o.commit).slice(0, 50)}” isn’t a commit hash (left out)`);
       const rawRelated = Array.isArray(o.related) ? o.related : typeof o.related === 'string' ? [o.related] : [];
-      const related = [...new Set(rawRelated.filter((r): r is string => typeof r === 'string').map((r) => r.trim()).filter((r) => TICKET_ID.test(r) && r !== id))].slice(0, 20);
-      if (!status && !reply && !commit && !related.length) { skipped.push(`${id}: nothing to change`); continue; }
+      // "duplicate_of" as written in the prompt; a list or camelCase is read too.
+      const rawDup = o.duplicate_of ?? o.duplicateOf;
+      const dupId = (Array.isArray(rawDup) ? rawDup[0] : rawDup);
+      const duplicateOf = typeof dupId === 'string' && TICKET_ID.test(dupId.trim()) && dupId.trim() !== id ? dupId.trim() : undefined;
+      if (rawDup !== undefined && rawDup !== null && rawDup !== '' && !duplicateOf) skipped.push(`${id}: “${String(rawDup).slice(0, 50)}” isn’t another ticket’s id (duplicate left out)`);
+      // A duplicate is already a link; listing it as related too would only undo it.
+      const related = [...new Set(rawRelated.filter((r): r is string => typeof r === 'string').map((r) => r.trim()).filter((r) => TICKET_ID.test(r) && r !== id && r !== duplicateOf))].slice(0, 20);
+      if (!status && !reply && !commit && !related.length && !duplicateOf) { skipped.push(`${id}: nothing to change`); continue; }
       if (seen.has(id)) { skipped.push(`${id}: listed twice, kept the first`); continue; }
       seen.add(id);
-      updates.push({ id, ...(status ? { status } : {}), ...(reply ? { reply } : {}), ...(commit ? { commit } : {}), ...(related.length ? { related } : {}) });
+      updates.push({ id, ...(status ? { status } : {}), ...(reply ? { reply } : {}), ...(commit ? { commit } : {}), ...(related.length ? { related } : {}), ...(duplicateOf ? { duplicateOf } : {}) });
     }
     if (updates.length || skipped.length) return { updates, skipped };
   }
