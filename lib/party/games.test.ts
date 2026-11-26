@@ -1064,27 +1064,44 @@ test('Kart Clash: AI bots hold the road, and a hands-off human is kept going by 
     raceId: 'race-1',
     trackId: 'canyon-driftway',
     racers,
-    // This checks steering, so no shells: a random hit spins a bot off the road and failed
-    // about 1 run in 5. Items mode 'pure' still hands out mushrooms, so boosts are covered.
+    // This checks steering, so no shells: a hit spins a bot off the road. Items mode 'pure'
+    // still hands out mushrooms, so boosts are covered.
     itemsMode: 'pure',
   });
+  // Hands-off from the first tick. Otherwise its idle input only goes stale after 2.5s of
+  // wall-clock time, so a slow (busy) run put the human on autopilot partway through and
+  // changed how the pack bumped into each other: the test passed alone and failed in the suite.
+  // (Stale, not deleted: a missing input gets the autopilot's first move saved as a fresh one.)
+  sim.inputs['p1'].updatedAt = 0;
   // Skip countdown and step 360 ticks (12 seconds of racing around curves)
   sim.countdownMs = 0;
+  // Steering is judged only while a bot drives itself: not in the 1.5s after touching another
+  // kart (a bump can carry it off the road) and not on a boost (off-road costs nothing then, so
+  // bots cut across on purpose). Wall scrapes still count. Bumps made up the off-road time in
+  // the runs that failed.
   let offRoadBotFrames = 0;
-  let totalBotFrames = 0;
+  let steeringBotFrames = 0;
+  const lastContact: Record<string, number> = {};
   for (let i = 0; i < 360; i++) {
     stepKartSimulation(sim, 1 / 30);
-    for (const k of Object.values(sim.karts)) {
+    const karts = Object.values(sim.karts);
+    for (const k of karts) {
       if (k.isBot) {
-        totalBotFrames++;
-        if (k.offRoad) offRoadBotFrames++;
+        if (karts.some((o) => o !== k && Math.hypot(o.x - k.x, o.z - k.z) < 3.6)) lastContact[k.id] = i;
+        const steering = (lastContact[k.id] === undefined || i - lastContact[k.id] >= 45) && k.boostTimer <= 0;
+        if (steering) {
+          steeringBotFrames++;
+          if (k.offRoad) offRoadBotFrames++;
+        }
       }
       assert.ok(Math.abs(k.lateralOffset) <= sim.track.wallWidth, 'no kart ever escapes the barriers');
     }
   }
   const human = sim.karts['p1'];
   const bots = Object.values(sim.karts).filter((k) => k.isBot);
-  assert.ok(offRoadBotFrames / totalBotFrames < 0.05, 'AI bots stay on the road through curves');
+  assert.ok(human.autopilot, 'the hands-off human is on the road assist');
+  assert.ok(steeringBotFrames > 100, 'bots spend part of the race steering on their own, so the check means something');
+  assert.ok(offRoadBotFrames / steeringBotFrames < 0.05, 'AI bots stay on the road through curves');
   assert.ok(human.totalProgress > 0.15, 'A hands-off human keeps moving along the spline');
   assert.ok(bots.every((b) => b.totalProgress > 0.15), 'All AI bots advance along the spline');
 
